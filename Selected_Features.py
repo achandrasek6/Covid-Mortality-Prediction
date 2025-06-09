@@ -1,3 +1,26 @@
+#!/usr/bin/env python3
+"""
+Script: Selected_Features.py
+
+Description:
+    This script loads a binary-feature matrix of SARS-CoV-2 variant data to model
+    the global case fatality rate (CFR) using Lasso regression with a pre-chosen
+    regularization strength (α = 0.000281). It:
+      1. Reads the training feature matrix (dropping SampleID, Variant, Global CFR).
+      2. Scales the binary features (zero-mean, unit variance).
+      3. Fits a Lasso model to the scaled data.
+      4. Identifies and prints the subset of features with non-zero coefficients,
+         indicating their relative importance in predicting CFR.
+
+Usage:
+    python lasso_selected_features.py
+
+Dependencies:
+    - numpy
+    - pandas
+    - scikit-learn
+"""
+
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Lasso

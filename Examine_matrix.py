@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""
+Script: report_sample_differences.py
+
+Description:
+    This script reads a binary feature matrix CSV (e.g., feature_matrix_train.csv)
+    and, for each sample, identifies which features (columns) have a value of 1.
+    It then prints each sample’s ID and variant along with the list of feature labels
+    where a difference (value = 1) occurs.
+
+Usage:
+    python report_sample_differences.py
+
+Dependencies:
+    - Python 3 (no additional libraries required; uses built-in csv module)
+"""
 import csv
 
 # Specify the input CSV file name (adjust as needed)

@@ -1,4 +1,34 @@
 #!/usr/bin/env python3
+"""
+Script: NCBI_variant_sampling.py
+
+Description:
+    This script queries NCBI’s nuccore database for complete SARS-CoV-2 genomes
+    of specified pangolin lineages (Alpha, Beta, Gamma, Delta, Omicron, and the
+    Wuhan-Hu-1 reference “WildType”), retrieves all matching FASTA records, and
+    annotates each sequence header with its variant name. All fetched records
+    are combined and written to a single output FASTA file.
+
+Features:
+    1. Uses Entrez.esearch to count and list all record IDs for each variant.
+    2. Uses Entrez.efetch to download full genome FASTA sequences in batch.
+    3. Appends “[VariantName]” to each sequence description for downstream
+       identification.
+    4. Respects NCBI usage guidelines by including an email address and
+       rate-limiting requests with a short pause between variant fetches.
+
+Usage:
+    Ensure you have Biopython installed (`pip install biopython`). Then run:
+        python fetch_sars_cov2_variants.py
+
+    The script will create a file named `variant_samples.fasta` in the
+    current directory containing all annotated sequences.
+
+Dependencies:
+    - Python 3
+    - Biopython (Bio.Entrez, Bio.SeqIO)
+"""
+
 from Bio import Entrez, SeqIO
 import time
 from io import StringIO

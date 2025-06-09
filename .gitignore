@@ -1,0 +1,6 @@
+# ignore virtualenv folder
+/myenv/
+
+# ignore python cache
+__pycache__/
+*.py[cod]
