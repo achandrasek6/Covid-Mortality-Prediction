@@ -1,4 +1,32 @@
 #!/usr/bin/env python3
+"""
+Script: Build_matrix.py
+
+Description:
+    This script processes a multiple‐sequence alignment of SARS-CoV-2 genomes (including the NC_045512.2 reference)
+    to generate binary feature matrices for machine learning. It:
+      1. Defines gene coordinate annotations based on the reference genome.
+      2. Maps alignment columns to raw reference positions and groups those by gene.
+      3. Extracts, for each sample, a binary vector indicating nucleotide differences from the reference at each gene position.
+      4. Attaches metadata: SampleID, Variant (parsed from sequence header), and known global CFR per variant.
+      5. Splits the dataset by variant into 70% training and 30% testing sets.
+      6. Drops any feature columns that are constant zeros in the training set.
+      7. Writes out two CSV files:
+         - feature_matrix_train.csv
+         - feature_matrix_test.csv
+
+Usage:
+    python Build_matrix.py
+
+Outputs:
+    - feature_matrix_train.csv : Training set with non-constant binary features
+    - feature_matrix_test.csv  : Testing set with the same selected features
+
+Dependencies:
+    - Python 3
+    - Biopython (`pip install biopython`) for AlignIO
+    - Standard library modules: csv, re, random, numpy, pandas (if used)
+"""
 from Bio import AlignIO
 import csv
 import re
