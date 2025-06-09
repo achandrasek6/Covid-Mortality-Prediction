@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+"""
+Script: ML_model.py
+
+Description:
+    This script performs Lasso regression on genomic feature matrices to model and predict
+    the global case fatality rate (CFR). It:
+      1. Loads training and testing feature matrices (dropping SampleID, Variant, Global CFR).
+      2. Scales the binary feature values to zero mean (with no centering).
+      3. Fits a final Lasso model with α = 0.000281.
+      4. Evaluates model performance via R² and MSE on both training and test sets.
+      5. Identifies and prints the set of non-zero (selected) features along with their coefficients.
+
+Usage:
+    python3 ML_model.py
+
+Outputs:
+    - Prints training and testing R² scores and the test MSE.
+    - Prints the number of retained features and their corresponding coefficients.
+
+Dependencies:
+    - numpy
+    - pandas
+    - scikit-learn
+"""
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Lasso
