@@ -16,7 +16,7 @@ Description:
          - feature_matrix_test.csv
 
 Usage:
-    python Build_matrix.py
+    python3 Build_matrix.py
 
 Outputs:
     - feature_matrix_train.csv : Training set with non-constant binary features
