@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script: report_sample_differences.py
+Script: Examine_matrix.py
 
 Description:
     This script reads a binary feature matrix CSV (e.g., feature_matrix_train.csv)
@@ -9,7 +9,7 @@ Description:
     where a difference (value = 1) occurs.
 
 Usage:
-    python report_sample_differences.py
+    python Examine_matrix.py
 
 Dependencies:
     - Python 3 (no additional libraries required; uses built-in csv module)
