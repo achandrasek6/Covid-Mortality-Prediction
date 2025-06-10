@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
+"""
+Script: Alignment.py
+
+Description:
+    This script prepares and aligns SARS-CoV-2 genome sequences using MAFFT. It:
+      1. Reads the reference genome FASTA (NC_045512.2_sequence.fasta) and a set of variant sample FASTAs.
+      2. Merges them into a single combined FASTA file with the reference placed first.
+      3. Invokes MAFFT (via Biopython’s wrapper) with the `--auto` option to perform multiple sequence alignment.
+      4. Writes the aligned output to a new FASTA file for downstream analysis.
+
+Usage:
+    Ensure MAFFT is installed and available in your PATH. Then run:
+        python Alignment.py
+
+Outputs:
+    - combined.fasta : Unaligned concatenation of reference + variant sequences.
+    - aligned.fasta  : MAFFT-generated multiple sequence alignment.
+
+Dependencies:
+    - Python 3
+    - Biopython (`pip install biopython`)
+    - MAFFT (command-line tool)
+"""
 from Bio import SeqIO
 from Bio.Align.Applications import MafftCommandline
 import os
