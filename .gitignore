@@ -7,4 +7,4 @@ __pycache__/
 
 # Ignore IDE files
 .idea/
-.iml
+*.iml
