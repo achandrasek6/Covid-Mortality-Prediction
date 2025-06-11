@@ -13,7 +13,7 @@ Description:
          indicating their relative importance in predicting CFR.
 
 Usage:
-    python lasso_selected_features.py
+    python3 Selected_Features.py
 
 Dependencies:
     - numpy
