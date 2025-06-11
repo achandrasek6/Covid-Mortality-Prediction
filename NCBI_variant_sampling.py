@@ -19,7 +19,7 @@ Features:
 
 Usage:
     Ensure you have Biopython installed (`pip install biopython`). Then run:
-        python fetch_sars_cov2_variants.py
+        python3 NCBI_variant_sampling.py
 
     The script will create a file named `variant_samples.fasta` in the
     current directory containing all annotated sequences.
