@@ -26,12 +26,15 @@ Outputs:
 Dependencies:
     - Python 3
     - Biopython (`pip install biopython`) for AlignIO
-    - Standard library modules: csv, re, random, numpy, pandas (if used)
+    - Standard library modules: csv, re, random
 """
 from Bio import AlignIO
 import csv
 import re
 import random
+
+# Set seed for reproducibilty
+random.seed(42)
 
 # ---------------------------
 # Define gene annotations (raw coordinates based on NC_045512.2)
