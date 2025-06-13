@@ -10,7 +10,7 @@ Description:
       2. Maps alignment columns to raw reference positions and groups those by gene.
       3. Extracts, for each sample, a binary vector indicating nucleotide differences from the reference at each gene position.
       4. Attaches metadata: SampleID, Variant (parsed from sequence header), and known global CFR per variant.
-      5. Splits the dataset by variant into 70% training and 30% testing sets.
+      5. Splits the dataset by variant into 70% training and 30% testing sets, placing any singleton‐variant samples directly into training.
       6. Drops any feature columns that are constant zeros in the training set.
       7. Writes out two CSV files:
          - feature_matrix_train.csv
@@ -18,78 +18,65 @@ Description:
 
 Usage:
     python3 Build_matrix.py
-
-Outputs:
-    - feature_matrix_train.csv : Training set with non-constant binary features
-    - feature_matrix_test.csv  : Testing set with the same selected features
-
-Dependencies:
-    - Python 3
-    - Biopython (`pip install biopython`) for AlignIO
-    - Standard library modules: csv, re, random
 """
+
 from Bio import AlignIO
-import csv
 import re
 import random
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
-# Set seed for reproducibilty
+# reproducibility
 random.seed(42)
 
 # ---------------------------
-# Define gene annotations (raw coordinates based on NC_045512.2)
+# Gene annotations (NC_045512.2 coordinates)
 # ---------------------------
 gene_annotations = [
-    {"gene": "ORF1ab", "start": 265, "end": 21555, "strand": 1},
-    {"gene": "S", "start": 21562, "end": 25384, "strand": 1},
-    {"gene": "ORF3a", "start": 25392, "end": 26220, "strand": 1},
-    {"gene": "E", "start": 26244, "end": 26472, "strand": 1},
-    {"gene": "M", "start": 26522, "end": 27191, "strand": 1},
-    {"gene": "ORF6", "start": 27201, "end": 27387, "strand": 1},
-    {"gene": "ORF7a", "start": 27393, "end": 27759, "strand": 1},
-    {"gene": "ORF7b", "start": 27755, "end": 27887, "strand": 1},
-    {"gene": "ORF8", "start": 27893, "end": 28259, "strand": 1},
-    {"gene": "N", "start": 28273, "end": 29533, "strand": 1},
-    {"gene": "ORF10", "start": 29557, "end": 29674, "strand": 1}
+    {"gene": "ORF1ab", "start": 265, "end": 21555},
+    {"gene": "S",      "start": 21562, "end": 25384},
+    {"gene": "ORF3a",  "start": 25392, "end": 26220},
+    {"gene": "E",      "start": 26244, "end": 26472},
+    {"gene": "M",      "start": 26522, "end": 27191},
+    {"gene": "ORF6",   "start": 27201, "end": 27387},
+    {"gene": "ORF7a",  "start": 27393, "end": 27759},
+    {"gene": "ORF7b",  "start": 27755, "end": 27887},
+    {"gene": "ORF8",   "start": 27893, "end": 28259},
+    {"gene": "N",      "start": 28273, "end": 29533},
+    {"gene": "ORF10",  "start": 29557, "end": 29674}
 ]
 
 # ---------------------------
-# Global CFR values for each variant as decimals.
+# Known global CFRs by variant
 # ---------------------------
 global_cfr = {
-    "WildType": 0.036,  # 3.6% -> 0.036
-    "Alpha": 0.026,     # 2.6% -> 0.026
-    "Beta": 0.042,      # 4.2% -> 0.042
-    "Gamma": 0.036,     # 3.6% -> 0.036
-    "Delta": 0.020,     # 2.0% -> 0.020
-    "Omicron": 0.007    # 0.7% -> 0.007
+    "WildType": 0.036,
+    "Alpha":     0.026,
+    "Beta":      0.042,
+    "Gamma":     0.036,
+    "Delta":     0.020,
+    "Omicron":   0.007
 }
 
 # ---------------------------
-# File names
+# File paths
 # ---------------------------
-alignment_file = "aligned.fasta"  # Combined alignment (reference + samples)
-train_csv = "feature_matrix_train.csv"
-test_csv = "feature_matrix_test.csv"
+alignment_file = "aligned.fasta"
+train_csv      = "feature_matrix_train.csv"
+test_csv       = "feature_matrix_test.csv"
 
 # ---------------------------
-# Read the alignment file
+# Load alignment & identify reference
 # ---------------------------
 alignment = AlignIO.read(alignment_file, "fasta")
-
-# Identify the reference sequence (assumes its header contains "NC_045512.2")
-ref_record = None
-for record in alignment:
-    if "NC_045512.2" in record.id:
-        ref_record = record
-        break
+ref_record = next((r for r in alignment if "NC_045512.2" in r.id), None)
 if ref_record is None:
-    raise Exception("Reference sequence 'NC_045512.2' not found in alignment.")
+    raise RuntimeError("Reference 'NC_045512.2' not found in alignment.")
 
 # ---------------------------
-# Build mapping: alignment column index -> reference raw coordinate.
+# Map alignment columns to raw positions
 # ---------------------------
-mapping = {}  # mapping[i] = reference raw position (or None if gap)
+mapping = {}
 raw_pos = 0
 for i, nt in enumerate(ref_record.seq):
     if nt != "-":
@@ -99,119 +86,96 @@ for i, nt in enumerate(ref_record.seq):
         mapping[i] = None
 
 # ---------------------------
-# Determine which alignment columns correspond to each annotated gene.
+# Determine which columns belong to each gene
 # ---------------------------
-gene_alignment_indices = {}  # gene -> list of alignment indices
-for gene in gene_annotations:
-    gene_name = gene["gene"]
-    indices = []
-    for i, pos in mapping.items():
-        if pos is not None and gene["start"] <= pos <= gene["end"]:
-            indices.append(i)
-    gene_alignment_indices[gene_name] = indices
+gene_alignment_indices = {}
+for ga in gene_annotations:
+    name = ga["gene"]
+    idxs = [
+        i
+        for i, pos in mapping.items()
+        if pos is not None and ga["start"] <= pos <= ga["end"]
+    ]
+    gene_alignment_indices[name] = idxs
 
-# Build column labels for the feature matrix.
-# These labels correspond to each nucleotide position in the annotated regions.
+# ---------------------------
+# Build feature column labels
+# ---------------------------
 column_labels = []
-for gene in gene_annotations:
-    gene_name = gene["gene"]
-    for j in range(1, len(gene_alignment_indices[gene_name]) + 1):
-        column_labels.append(f"{gene_name}_{j}")
+for ga in gene_annotations:
+    name = ga["gene"]
+    for j in range(1, len(gene_alignment_indices[name]) + 1):
+        column_labels.append(f"{name}_{j}")
 
 # ---------------------------
-# Function to extract variant name from header (assumes variant is in square brackets)
+# Helper to parse variant from header
 # ---------------------------
-def extract_variant(header):
-    match = re.search(r'\[([^\]]+)\]', header)
-    if match:
-        return match.group(1).strip()
-    else:
-        return "unknown"
+def extract_variant(header: str) -> str:
+    m = re.search(r"\[([^\]]+)\]", header)
+    return m.group(1) if m else "unknown"
 
 # ---------------------------
-# Build the full feature matrix rows for each sample.
-# Each row: [SampleID, Variant, Global CFR, feature vector...]
+# Construct rows: [SampleID, Variant, CFR, feat1, feat2, …]
 # ---------------------------
 all_rows = []
-for record in alignment:
-    # Skip the reference sequence.
-    if "NC_045512.2" in record.id:
+for rec in alignment:
+    if "NC_045512.2" in rec.id:
         continue
-
-    sample_id = record.id
-    variant = extract_variant(record.description)
-    cfr = global_cfr.get(variant, "N/A")
-    features = []
-    for gene in gene_annotations:
-        gene_name = gene["gene"]
-        for idx in gene_alignment_indices[gene_name]:
-            ref_nt = ref_record.seq[idx].upper()
-            sample_nt = record.seq[idx].upper()
-            features.append(0 if sample_nt == ref_nt else 1)
-    all_rows.append([sample_id, variant, cfr] + features)
+    sid = rec.id
+    var = extract_variant(rec.description)
+    cfr = global_cfr.get(var, "N/A")
+    feats = []
+    for ga in gene_annotations:
+        for idx in gene_alignment_indices[ga["gene"]]:
+            ref_nt    = ref_record.seq[idx].upper()
+            sample_nt = rec.seq[idx].upper()
+            feats.append(int(sample_nt != ref_nt))
+    all_rows.append([sid, var, cfr] + feats)
 
 # ---------------------------
-# Group the rows by variant.
+# Create DataFrame
 # ---------------------------
-variant_groups = {}
-for row in all_rows:
-    variant = row[1]
-    if variant not in variant_groups:
-        variant_groups[variant] = []
-    variant_groups[variant].append(row)
+df = pd.DataFrame(
+    all_rows,
+    columns=["SampleID", "Variant", "Global CFR"] + column_labels
+)
 
 # ---------------------------
-# For each variant group, split into 70% training and 30% testing.
+# Handle singleton variants & stratified split
 # ---------------------------
-train_rows = []
-test_rows = []
-for variant, rows in variant_groups.items():
-    random.shuffle(rows)
-    split_point = int(0.7 * len(rows))
-    train_rows.extend(rows[:split_point])
-    test_rows.extend(rows[split_point:])
+# Identify variants with <2 samples
+counts = df["Variant"].value_counts()
+singletons = counts[counts < 2].index.tolist()
+
+# Pull singletons entirely into training
+df_single = df[df["Variant"].isin(singletons)]
+df_main   = df[~df["Variant"].isin(singletons)]
+
+# Stratified 70/30 on the remaining variants
+df_train_main, df_test = train_test_split(
+    df_main,
+    test_size=0.30,
+    random_state=42,
+    stratify=df_main["Variant"]
+)
+
+# Combine singleton rows into training
+df_train = pd.concat([df_train_main, df_single], axis=0).reset_index(drop=True)
 
 # ---------------------------
-# Drop any feature columns (i.e. columns after the first 3) that are all zeros in the training set.
+# Drop zero‐only features (based on training set)
 # ---------------------------
-# header: ["SampleID", "Variant", "Global CFR"] + column_labels
-feature_start = 3  # feature columns start at index 3
-num_features = len(column_labels)
-# Determine which feature columns are non-constant (i.e. not all zeros) in training data.
-keep_feature_indices = []
-for j in range(num_features):
-    col_idx = feature_start + j
-    # Check if at least one training row has a non-zero value for this feature.
-    if any(row[col_idx] != 0 for row in train_rows):
-        keep_feature_indices.append(col_idx)
+keep_feats = [col for col in column_labels if df_train[col].any()]
+final_cols = ["SampleID", "Variant", "Global CFR"] + keep_feats
 
-# Update header: keep first 3 columns and the kept feature columns.
-new_header = ["SampleID", "Variant", "Global CFR"] + [f for i, f in enumerate(column_labels) if feature_start + i in keep_feature_indices]
-
-def filter_features(rows, keep_indices, feature_start=3):
-    new_rows = []
-    for row in rows:
-        new_row = row[:feature_start]  # first three columns
-        new_row += [row[i] for i in keep_indices]
-        new_rows.append(new_row)
-    return new_rows
-
-train_rows = filter_features(train_rows, keep_feature_indices, feature_start)
-test_rows = filter_features(test_rows, keep_feature_indices, feature_start)
+df_train = df_train[final_cols]
+df_test  = df_test[final_cols]
 
 # ---------------------------
-# Write the training and testing matrices to CSV files.
+# Save to CSV
 # ---------------------------
-with open(train_csv, "w", newline="") as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(new_header)
-    for row in train_rows:
-        writer.writerow(row)
+df_train.to_csv(train_csv, index=False)
 print(f"Training feature matrix saved to '{train_csv}'.")
 
-with open(test_csv, "w", newline="") as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(new_header)
-    for row in test_rows:
-        writer.writerow(row)
+df_test.to_csv(test_csv, index=False)
 print(f"Testing feature matrix saved to '{test_csv}'.")

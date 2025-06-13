@@ -45,8 +45,8 @@ scaler = StandardScaler(with_mean=False)
 X_train_s = scaler.fit_transform(X_train)
 X_test_s  = scaler.transform(X_test)
 
-# 3) Fit Lasso with α = 0.000281
-alpha = 0.000281
+# 3) Fit Lasso with α = 0.000174
+alpha = 0.000174
 lasso_final = Lasso(alpha=alpha, max_iter=10000)
 lasso_final.fit(X_train_s, y_train)
 

@@ -37,7 +37,7 @@ scaler = StandardScaler(with_mean=False)
 X_train_scaled = scaler.fit_transform(X_train)
 
 # 3) Fit Lasso with the chosen alpha
-alpha = 0.000281
+alpha = 0.000174
 lasso = Lasso(alpha=alpha, max_iter=10000)
 lasso.fit(X_train_scaled, y_train)
 
