@@ -29,7 +29,7 @@ process preprocess {
     path sample
 
     output:
-    tuple path("new_prep/variant_binary_matrix.csv"), path("new_prep/aligned_filtered.fasta")
+    tuple path("preprocessed/variant_binary_matrix.csv"), path("preprocessed/aligned_filtered.fasta")
 
     script:
     """
@@ -37,7 +37,7 @@ process preprocess {
       --samples ${sample} \
       --reference-fasta ${workflow.projectDir}/${params.reference_fasta} \
       --identity-threshold ${params.identity_thresh} \
-      --out-dir new_prep
+      --out-dir preprocessed
     """
 }
 
