@@ -8,3 +8,12 @@ __pycache__/
 # Ignore IDE files
 .idea/
 *.iml
+
+# Nextflow work and output
+work/
+analysis_output/
+*.pyc
+__pycache__/
+.venv/
+myenv/
+*.log
