@@ -4,24 +4,15 @@
 Script: bootstrap_model.py
 
 Description:
-    Performs parallelized bootstrap resampling to assess the stability of a Lasso model
-    predicting global case fatality rate (CFR) from genomic features.
-
-    Steps:
-      1. Loads hardcoded train/test feature matrices (CSV filenames).
-      2. Scales features (zero mean off).
-      3. Runs N bootstrap iterations in parallel:
-         a. Samples the train set with replacement.
-         b. Fits Lasso(alpha) on the sample.
-         c. Evaluates R² on the test set.
-      4. Displays a histogram of bootstrap test-set R² distribution interactively.
+    Performs bootstrap resampling to assess the stability of a Lasso model predicting
+    global case fatality rate (CFR) from genomic features and writes **only** the histogram
+    of the bootstrap test-set R² distribution to `figures/bootstrap_r2_histogram.png`.
 
 Usage:
     python3 bootstrap_model.py
-
-Dependencies:
-    numpy, pandas, scikit-learn, matplotlib, joblib
 """
+
+import os
 import time
 import numpy as np
 import pandas as pd
@@ -32,18 +23,31 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score
 from joblib import Parallel, delayed
 import multiprocessing
+import sys
 
 # ---------------------------
-# Configuration
+# Configuration (hardcoded)
 # ---------------------------
-TRAIN_CSV    = "feature_matrix_train.csv"
-TEST_CSV     = "feature_matrix_test.csv"
+TRAIN_CSV    = "../lasso_training_data/feature_matrix_train.csv"
+TEST_CSV     = "../lasso_training_data/feature_matrix_test.csv"
 ALPHA        = 0.000174    # Lasso regularization strength
 N_BOOTSTRAPS = 1000        # Number of bootstrap iterations
-SEED         = 42          # Random seed
+SEED         = 42          # Base random seed
+
+def get_output_dir():
+    this_path = os.path.abspath(__file__)
+    parent = os.path.dirname(this_path)
+    if os.path.basename(parent) == "scripts":
+        project_root = os.path.dirname(parent)
+    else:
+        project_root = parent
+    out_dir = os.path.join(project_root, "figures")
+    return os.path.abspath(out_dir)
+
+OUT_DIR = get_output_dir()
 
 # ---------------------------
-# Data loading and scaling
+# Load and scale
 # ---------------------------
 def load_and_scale(train_path, test_path):
     df_train = pd.read_csv(train_path)
@@ -62,7 +66,7 @@ def load_and_scale(train_path, test_path):
     return X_train_s, y_train, X_test_s, y_test
 
 # ---------------------------
-# Single bootstrap function
+# Single bootstrap iteration
 # ---------------------------
 def _bootstrap_iteration(i, X_train_s, y_train, X_test_s, y_test, alpha, seed):
     rng = np.random.RandomState(seed + i)
@@ -73,36 +77,41 @@ def _bootstrap_iteration(i, X_train_s, y_train, X_test_s, y_test, alpha, seed):
     return r2_score(y_test, model.predict(X_test_s))
 
 # ---------------------------
-# Plotting function (interactive)
+# Plot histogram only
 # ---------------------------
-def show_histogram(r2_values):
+def plot_histogram(r2_values, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    arr = np.array(r2_values)
+    hist_path = os.path.join(out_dir, "bootstrap_r2_histogram.png")
+
     plt.figure(figsize=(8, 4))
-    plt.hist(r2_values, bins=30, edgecolor='black')
+    plt.hist(arr, bins=30, edgecolor='black')
     plt.xlabel("Test R²")
     plt.ylabel("Frequency")
-    plt.title(f"Bootstrap Test R² Distribution (n={len(r2_values)})")
+    plt.title(f"Bootstrap Test R² Distribution (n={len(arr)})")
     plt.tight_layout()
-    plt.show()
+    plt.savefig(hist_path, dpi=300)
+    plt.close()
+    print(f"Saved histogram to {hist_path}")
 
 # ---------------------------
-# Main execution
+# Main
 # ---------------------------
 def main():
     print("Loading and scaling data...")
     X_train_s, y_train, X_test_s, y_test = load_and_scale(TRAIN_CSV, TEST_CSV)
 
-    print(f"Running {N_BOOTSTRAPS} bootstrap iterations in parallel...")
-    start_time = time.time()
+    print(f"Running {N_BOOTSTRAPS} bootstrap iterations...")
+    start = time.time()
     n_jobs = max(1, multiprocessing.cpu_count() - 1)
     r2_values = Parallel(n_jobs=n_jobs)(
         delayed(_bootstrap_iteration)(i, X_train_s, y_train, X_test_s, y_test, ALPHA, SEED)
         for i in range(N_BOOTSTRAPS)
     )
-    elapsed = time.time() - start_time
-    print(f"Completed {N_BOOTSTRAPS} iterations in {elapsed:.1f} seconds.")
+    elapsed = time.time() - start
+    print(f"Completed in {elapsed:.1f}s.")
 
-    show_histogram(r2_values)
+    plot_histogram(r2_values, OUT_DIR)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
