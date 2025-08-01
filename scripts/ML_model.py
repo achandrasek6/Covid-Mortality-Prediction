@@ -1,8 +1,38 @@
 #!/usr/bin/env python3
 """
-Updated ML_model.py
+ML_model.py
 
-Adds persistence so the trained model and scaler can be reused for prediction-only.
+Train the Lasso regression model on the precomputed feature matrices and persist the
+model + scaler for later prediction/inference. Also reports performance and selected features.
+
+Main responsibilities:
+  1. Load the training and testing feature matrices (CSV), which include sample identifiers,
+     variant features, and the target variable ("Global CFR").
+  2. Scale the features with a StandardScaler (configured to match original training: with_mean=False).
+  3. Fit a Lasso model with a specified regularization strength (alpha).
+  4. Persist the trained model and scaler to disk under model_artifacts/ for reuse in inference.
+  5. Evaluate the model on both training and testing sets, reporting R² and MSE.
+  6. Extract and print the nonzero (selected) features and their coefficients.
+
+Expected inputs (by default or via arguments):
+  - Training matrix: feature_matrix_train.csv
+  - Testing matrix: feature_matrix_test.csv
+
+Outputs:
+  - model_artifacts/lasso_model.joblib   : Serialized Lasso model.
+  - model_artifacts/scaler.joblib        : Serialized scaler used to transform input features.
+  - Console/log output with training/testing performance and retained feature coefficients.
+
+Typical usage (if refactored to CLI):
+  python3 scripts/ML_model.py \
+    --train-matrix training/feature_matrix_train.csv \
+    --test-matrix training/feature_matrix_test.csv \
+    --out-dir model_artifacts
+
+Note:
+  If you already have the serialized model and scaler saved, this script does not need to be
+  re-run for prediction; downstream inference should use those artifacts directly (e.g.,
+  via collapse_and_predict.py).
 """
 import numpy as np
 import pandas as pd

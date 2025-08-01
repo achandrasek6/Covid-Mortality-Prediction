@@ -1,6 +1,34 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
+/*
+ * main.nf
+ *
+ * Prediction pipeline for SARS-CoV-2 samples.
+ * Steps:
+ *   1. Preprocess unaligned sample FASTA against reference: alignment, identity filtering,
+ *      and binary variant matrix construction.
+ *   2. Collapse & predict: map variants to the trained feature space, apply saved scaler
+ *      and Lasso model, output mortality-rate predictions and optional metrics.
+ *
+ * Key parameters:
+ *   --samples                : Input sample FASTA (unaligned)
+ *   --reference_fasta        : Reference genome FASTA
+ *   --train_feature_matrix   : Original training feature matrix (for feature alignment)
+ *   --model / --scaler       : Persisted model and scaler artifacts
+ *   --target                 : Optional ground truth for metrics
+ *   --outdir                : Where to publish outputs
+ *
+ * Example:
+ *   nextflow run main.nf \
+ *       --samples raw_data/variant_samples_small.fasta \
+ *       --reference_fasta raw_data/NC_045512.2_sequence.fasta \
+ *       --train_feature_matrix lasso_training_data/feature_matrix_train.csv \
+ *       --model model_artifacts/lasso_model.joblib \
+ *       --scaler model_artifacts/scaler.joblib \
+ *       --outdir analysis_output
+ */
+
 // Parameters with new defaults matching your structure
 params.samples                 = null
 params.train_feature_matrix    = "lasso_training_data/feature_matrix_train.csv"

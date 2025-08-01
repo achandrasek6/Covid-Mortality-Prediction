@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Script: finetune_dnabert_cfr_regressor_full_genome.py
+Script: dnabert_cfr_regressor_all_layers_richer_head.py
 
 Fine-tunes DNABERT on real + synthetic SARS-CoV-2 full-genome sequences to predict
 global case-fatality rate (CFR) as a continuous value. All transformer layers are
 unfrozen and a richer regression head (256→64→1) is used.
 
 Usage:
-    python finetune_dnabert_cfr_regressor_full_genome.py
+    python dnabert_cfr_regressor_all_layers_richer_head.py
 
 Dependencies:
     tensorflow, transformers, biopython, numpy, scikit-learn, matplotlib
@@ -30,7 +30,7 @@ from tensorflow.keras.callbacks import (
 import matplotlib.pyplot as plt
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
-ALIGNMENT_FASTA = 'aligned.fasta'
+ALIGNMENT_FASTA = '../transformed_data/aligned.fasta'
 PRETRAINED       = 'zhihan1996/DNA_bert_6'
 MAX_LEN          = 512           # maximum input length for DNABERT
 BATCH_SIZE       = 2

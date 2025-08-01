@@ -1,4 +1,42 @@
 #!/usr/bin/env python3
+"""
+subsample_fasta.py
+
+Utility to create a reproducible random subset of sequences from a large FASTA file
+using reservoir sampling (constant memory, one-pass). Intended for fast iteration / testing
+without needing to process the full dataset.
+
+Main responsibilities:
+  1. Read through the input FASTA.
+  2. Select `k` sequences uniformly at random via reservoir sampling.
+  3. Write the subset to an output FASTA.
+
+Features:
+  * Fixed default seed (42) for deterministic subsamples unless overridden.
+  * Works on arbitrarily large FASTA without loading all sequences into memory.
+
+CLI arguments:
+  -i, --input    : Path to the input FASTA (full dataset).
+  -o, --output   : Path to write the subsampled FASTA.
+  -k            : Number of sequences to sample.
+  --seed        : (Optional) Random seed for reproducibility; default is 42.
+
+Outputs:
+  Subsampled FASTA containing `k` sequences.
+
+Example usage:
+  python3 scripts/subsample_fasta.py \
+    -i raw_data/variant_samples.fasta \
+    -o transformed_data/variant_samples_small.fasta \
+    -k 100
+
+  # With explicit seed (different subset)
+  python3 scripts/subsample_fasta.py \
+    -i raw_data/variant_samples.fasta \
+    -o transformed_data/variant_samples_small.fasta \
+    -k 100 --seed 123
+"""
+
 import argparse
 import random
 from Bio import SeqIO

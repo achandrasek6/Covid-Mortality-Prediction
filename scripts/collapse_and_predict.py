@@ -1,4 +1,50 @@
 #!/usr/bin/env python3
+"""
+collapse_and_predict.py
+
+Pipeline step that takes preprocessed sequence data, collapses it into the feature
+space expected by the trained Lasso model, loads the saved model and scaler, and
+produces mortality-rate predictions (e.g., CFR). Optionally, if ground-truth labels
+are provided, it computes evaluation metrics.
+
+Main responsibilities:
+  1. Load the filtered/ aligned variant matrix and aligned FASTA.
+  2. Collapse the variant representation to the same feature set as used in training,
+     respecting the selected features (e.g., via the original training feature matrix).
+  3. Load the persisted scaler and Lasso model (from model_artifacts).
+  4. Apply scaling to the new data and run model.predict to get CFR/mortality predictions.
+  5. If a target CSV is supplied, compare predictions to ground truth and output metrics.
+  6. Write out:
+       - Collapsed feature matrix (matching model input)
+       - Predictions CSV
+       - Metrics file (if applicable)
+
+Expected inputs (via CLI arguments):
+  --variant-matrix           : Binary variant matrix produced by preprocessing.
+  --aligned-fasta           : Filtered & aligned FASTA used to derive sample ordering.
+  --reference-id            : Reference sequence ID (used for alignment sanity).
+  --train-feature-matrix    : Original training feature matrix (used to determine selected features and column headers).
+  --model                   : Path to saved Lasso model (e.g., lasso_model.joblib).
+  --scaler                  : Path to saved scaler (e.g., scaler.joblib).
+  --target                 : Optional CSV with true labels (e.g., SampleID and Global CFR) for computing metrics.
+  --out-dir                : Output directory to write predictions, collapsed matrix, and metrics.
+
+Outputs:
+  final_predictions/predictions.csv               : Model output per sample.
+  final_predictions/collapsed_feature_matrix.csv  : Feature matrix used for prediction (subset of training features).
+  final_predictions/metrics.txt (if --target)     : Evaluation metrics (e.g., R², MSE) comparing predictions to truth.
+
+Example usage:
+  python3 scripts/collapse_and_predict.py \
+    --variant-matrix preprocessed/variant_binary_matrix.csv \
+    --aligned-fasta preprocessed/aligned_filtered.fasta \
+    --reference-id NC_045512.2 \
+    --train-feature-matrix lasso_training_data/feature_matrix_train.csv \
+    --model model_artifacts/lasso_model.joblib \
+    --scaler model_artifacts/scaler.joblib \
+    --target data/true_cfrs.csv \
+    --out-dir final_predictions
+"""
 import argparse
 import os
 import re

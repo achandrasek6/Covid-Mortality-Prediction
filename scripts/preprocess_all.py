@@ -1,4 +1,43 @@
 #!/usr/bin/env python3
+"""
+preprocess_all.py
+
+Full preprocessing pipeline for raw SARS-CoV-2 sample FASTA(s). Given unaligned
+sample sequences and a reference genome, this script performs:
+
+  1. Reference discovery or validation (with optional explicit reference FASTA).
+  2. Concatenation of reference + samples and multiple sequence alignment via MAFFT.
+  3. Reordering the alignment to place the reference first.
+  4. Filtering samples based on percent identity to the reference; low-identity
+     sequences are rejected and saved separately.
+  5. Building a binary variant matrix from the filtered alignment (encoding
+     deviations from reference at each position).
+  6. Writing out:
+       - Filtered & reordered alignment (FASTA)
+       - Identity summary (per-sample percent identity and pass/reject)
+       - Rejected sample FASTAs (for those below threshold)
+       - Binary variant matrix (CSV)
+
+Expected CLI inputs:
+  --samples              : Unaligned sample FASTA file.
+  --reference-fasta      : Optional path to reference FASTA (auto-detected if omitted).
+  --identity-threshold   : Minimum percent identity (e.g., 92.0) for keeping a sample.
+  --out-dir              : Output directory to write preprocessing results.
+  --mafft-args          : Extra arguments to pass to MAFFT (optional).
+
+Primary outputs (under out-dir):
+  aligned_filtered.fasta         : Filtered alignment (reference + passing samples).
+  identity_summary.tsv          : Table with percent identity and status per sample.
+  rejected/                     : Directory containing FASTA(s) of filtered-out samples.
+  variant_binary_matrix.csv     : Binary matrix encoding variants for downstream modeling.
+
+Example usage:
+  python3 scripts/preprocess_all.py \
+    --samples raw_data/variant_samples.fasta \
+    --reference-fasta raw_data/NC_045512.2_sequence.fasta \
+    --identity-threshold 92.0 \
+    --out-dir preprocessed
+"""
 import argparse
 import os
 import sys
