@@ -28,8 +28,8 @@ import os
 
 # File names (adjust paths if needed)
 ref_file = "../raw_data/NC_045512.2_sequence.fasta"
-variants_file = "../raw_data/variant_samples.fasta"
-combined_file = "../transformed_data/combined.fasta"
+variants_file = "../transformed_data/variant_samples.fasta"
+combined_file = "../raw_data/combined.fasta"
 aligned_file = "../transformed_data/aligned.fasta"
 
 # Step 1: Combine the reference and variant samples into one FASTA file.

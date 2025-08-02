@@ -60,10 +60,13 @@ process preprocess {
     tuple path("preprocessed/variant_binary_matrix.csv"), path("preprocessed/aligned_filtered.fasta")
 
     script:
+    // resolve reference: if absolute use as-is, else prepend projectDir
+    def ref_fasta = params.reference_fasta.startsWith("/") ? params.reference_fasta : "${workflow.projectDir}/${params.reference_fasta}"
+
     """
     python3 ${workflow.projectDir}/scripts/preprocess_all.py \
       --samples ${sample} \
-      --reference-fasta ${workflow.projectDir}/${params.reference_fasta} \
+      --reference-fasta ${ref_fasta} \
       --identity-threshold ${params.identity_thresh} \
       --out-dir preprocessed
     """
@@ -81,16 +84,22 @@ process collapse_predict {
     path "final_predictions/metrics.txt" optional true
 
     script:
+    // resolve possibly-absolute inputs
+    def train_feat = params.train_feature_matrix.startsWith("/") ? params.train_feature_matrix : "${workflow.projectDir}/${params.train_feature_matrix}"
+    def model_file = params.model.startsWith("/") ? params.model : "${workflow.projectDir}/${params.model}"
+    def scaler_file = params.scaler.startsWith("/") ? params.scaler : "${workflow.projectDir}/${params.scaler}"
     def target_arg = params.target ? "--target ${params.target}" : ""
+
     """
     python3 ${workflow.projectDir}/scripts/collapse_and_predict.py \
       --variant-matrix ${variant_matrix} \
       --aligned-fasta ${aligned_filtered} \
       --reference-id NC_045512.2 \
-      --train-feature-matrix ${workflow.projectDir}/${params.train_feature_matrix} \
-      --model ${workflow.projectDir}/${params.model} \
-      --scaler ${workflow.projectDir}/${params.scaler} \
+      --train-feature-matrix ${train_feat} \
+      --model ${model_file} \
+      --scaler ${scaler_file} \
       ${ target_arg } \
       --out-dir final_predictions
     """
 }
+

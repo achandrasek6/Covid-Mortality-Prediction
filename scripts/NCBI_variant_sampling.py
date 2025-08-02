@@ -95,7 +95,7 @@ for variant_name, lineage in variants.items():
     time.sleep(0.5)  # Pause to be respectful to NCBI servers
 
 # Step 5: Write all combined records to one FASTA file.
-output_file = "../raw_data/variant_samples.fasta"
+output_file = "../transformed_data/variant_samples.fasta"
 with open(output_file, "w") as out_f:
     SeqIO.write(combined_records, out_f, "fasta")
 

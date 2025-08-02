@@ -33,7 +33,7 @@ Primary outputs (under out-dir):
 
 Example usage:
   python3 scripts/preprocess_all.py \
-    --samples raw_data/variant_samples.fasta \
+    --samples transformed_data/variant_samples_small.fasta \
     --reference-fasta raw_data/NC_045512.2_sequence.fasta \
     --identity-threshold 92.0 \
     --out-dir preprocessed
