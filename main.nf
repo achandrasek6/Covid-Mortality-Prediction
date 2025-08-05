@@ -1,105 +1,108 @@
 #!/usr/bin/env nextflow
-nextflow.enable.dsl=2
+nextflow.enable.dsl = 2
 
-/*
- * main.nf
- *
- * Prediction pipeline for SARS-CoV-2 samples.
- * Steps:
- *   1. Preprocess unaligned sample FASTA against reference: alignment, identity filtering,
- *      and binary variant matrix construction.
- *   2. Collapse & predict: map variants to the trained feature space, apply saved scaler
- *      and Lasso model, output mortality-rate predictions and optional metrics.
- *
- * Key parameters:
- *   --samples                : Input sample FASTA (unaligned)
- *   --reference_fasta        : Reference genome FASTA
- *   --train_feature_matrix   : Original training feature matrix (for feature alignment)
- *   --model / --scaler       : Persisted model and scaler artifacts
- *   --target                 : Optional ground truth for metrics
- *   --outdir                : Where to publish outputs
- *
- * Example:
- *   nextflow run main.nf \
- *       --samples raw_data/variant_samples_small.fasta \
- *       --reference_fasta raw_data/NC_045512.2_sequence.fasta \
- *       --train_feature_matrix lasso_training_data/feature_matrix_train.csv \
- *       --model model_artifacts/lasso_model.joblib \
- *       --scaler model_artifacts/scaler.joblib \
- *       --outdir analysis_output
- */
+// Parameters
+params.samples              ?: error("Please set --samples")
+params.reference_fasta      ?: error("Please set --reference_fasta")
+params.train_feature_matrix ?: error("Please set --train_feature_matrix")
+params.model                ?: error("Please set --model")
+params.scaler               ?: error("Please set --scaler")
+params.outdir               = params.outdir ?: 'analysis_output'
+params.chunk_size           = params.chunk_size ?: 10
+params.identity_thresh      = params.identity_thresh ?: 92.0
 
-// Parameters with new defaults matching your structure
-params.samples                 = null
-params.train_feature_matrix    = "lasso_training_data/feature_matrix_train.csv"
-params.model                  = "model_artifacts/lasso_model.joblib"
-params.scaler                 = "model_artifacts/scaler.joblib"
-params.target                 = null
-params.reference_fasta        = "raw_data/NC_045512.2_sequence.fasta"
-params.identity_thresh       = 92.0
-params.outdir                = "analysis_output"
+def venv = "${workflow.projectDir}/myenv/bin/python3"
 
 workflow {
-    if (!params.samples) error "Missing --samples parameter"
+  Channel
+    .fromPath(params.samples)
+    .ifEmpty { error "Cannot find FASTA: ${params.samples}" }
+    .splitFasta(by: params.chunk_size, file: true)
+    .map { fasta -> tuple(fasta, fasta.baseName) }
+    .set { chunks_ch }
 
-    Channel.fromPath(params.samples)
-           .ifEmpty { error "sample not found: ${params.samples}" }
-           .set { sample_ch }
+  preprocessChunk(chunks_ch)
+    .set { preproc_ch }
 
-    preprocess(sample_ch) | collapse_predict
+  predictChunk(preproc_ch)
+    .set { preds_ch }
+
+  mergePredictions(preds_ch.collect())
 }
 
-process preprocess {
-    publishDir params.outdir, mode: 'copy'
-    tag { sample -> sample }
 
-    input:
-    path sample
+process preprocessChunk {
+  tag "$chunkName"
 
-    output:
-    tuple path("preprocessed/variant_binary_matrix.csv"), path("preprocessed/aligned_filtered.fasta")
+  input:
+    tuple path(chunkFasta), val(chunkName)
 
-    script:
-    // resolve reference: if absolute use as-is, else prepend projectDir
-    def ref_fasta = params.reference_fasta.startsWith("/") ? params.reference_fasta : "${workflow.projectDir}/${params.reference_fasta}"
+  output:
+    tuple \
+      path("${chunkName}_variant_binary_matrix.csv"), \
+      path("${chunkName}_aligned_filtered.fasta"), \
+      val(chunkName)
 
-    """
-    python3 ${workflow.projectDir}/scripts/preprocess_all.py \
-      --samples ${sample} \
-      --reference-fasta ${ref_fasta} \
-      --identity-threshold ${params.identity_thresh} \
-      --out-dir preprocessed
-    """
+  script:
+  """
+  ${venv} ${workflow.projectDir}/scripts/preprocess_all.py \
+    --samples         ${chunkFasta} \
+    --reference-fasta ${params.reference_fasta} \
+    --identity-threshold ${params.identity_thresh} \
+    --out-dir         ${chunkName}_pre
+
+  mv ${chunkName}_pre/variant_binary_matrix.csv ${chunkName}_variant_binary_matrix.csv
+  mv ${chunkName}_pre/aligned_filtered.fasta  ${chunkName}_aligned_filtered.fasta
+  """
 }
 
-process collapse_predict {
-    publishDir params.outdir, mode: 'copy'
 
-    input:
-    tuple path(variant_matrix), path(aligned_filtered)
+process predictChunk {
+  tag "$chunkName"
 
-    output:
-    path "final_predictions/predictions.csv"
-    path "final_predictions/collapsed_feature_matrix.csv"
-    path "final_predictions/metrics.txt" optional true
+  input:
+    tuple path(variantMatrix), path(alignedFasta), val(chunkName)
 
-    script:
-    // resolve possibly-absolute inputs
-    def train_feat = params.train_feature_matrix.startsWith("/") ? params.train_feature_matrix : "${workflow.projectDir}/${params.train_feature_matrix}"
-    def model_file = params.model.startsWith("/") ? params.model : "${workflow.projectDir}/${params.model}"
-    def scaler_file = params.scaler.startsWith("/") ? params.scaler : "${workflow.projectDir}/${params.scaler}"
-    def target_arg = params.target ? "--target ${params.target}" : ""
+  output:
+    path "predictions_${chunkName}.csv"
 
-    """
-    python3 ${workflow.projectDir}/scripts/collapse_and_predict.py \
-      --variant-matrix ${variant_matrix} \
-      --aligned-fasta ${aligned_filtered} \
-      --reference-id NC_045512.2 \
-      --train-feature-matrix ${train_feat} \
-      --model ${model_file} \
-      --scaler ${scaler_file} \
-      ${ target_arg } \
-      --out-dir final_predictions
-    """
+  script:
+  """
+  ${venv} ${workflow.projectDir}/scripts/collapse_and_predict.py \
+    --variant-matrix       ${variantMatrix} \
+    --aligned-fasta        ${alignedFasta} \
+    --reference-id         NC_045512.2 \
+    --train-feature-matrix ${workflow.projectDir}/${params.train_feature_matrix} \
+    --model                ${workflow.projectDir}/${params.model} \
+    --scaler               ${workflow.projectDir}/${params.scaler} \
+    --out-dir              ${chunkName}_pred
+
+  mv ${chunkName}_pred/predictions.csv predictions_${chunkName}.csv
+  """
 }
 
+
+process mergePredictions {
+  publishDir "${params.outdir}", mode: 'copy'
+
+  input:
+    path predsFiles
+
+  output:
+    path "all_predictions.csv"
+
+  script:
+  """
+  awk -F',' '
+    # Only keep one header, and rename it to “predicted_cfr_fraction”
+    FNR==1 {
+      if (NR==1) { print "sample,predicted_cfr_fraction" }
+      next
+    }
+    # Drop reference-genome rows
+    \$1 == "NC_045512.2" { next }
+    # Print everything else unchanged
+    { print }
+  ' ${predsFiles.join(' ')} > all_predictions.csv
+  """
+}
