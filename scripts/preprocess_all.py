@@ -17,27 +17,8 @@ sample sequences and a reference genome, this script performs:
        - Identity summary (per-sample percent identity and pass/reject)
        - Rejected sample FASTAs (for those below threshold)
        - Binary variant matrix (CSV)
-
-Expected CLI inputs:
-  --samples              : Unaligned sample FASTA file.
-  --reference-fasta      : Optional path to reference FASTA (auto-detected if omitted).
-  --identity-threshold   : Minimum percent identity (e.g., 92.0) for keeping a sample.
-  --out-dir              : Output directory to write preprocessing results.
-  --mafft-args          : Extra arguments to pass to MAFFT (optional).
-
-Primary outputs (under out-dir):
-  aligned_filtered.fasta         : Filtered alignment (reference + passing samples).
-  identity_summary.tsv          : Table with percent identity and status per sample.
-  rejected/                     : Directory containing FASTA(s) of filtered-out samples.
-  variant_binary_matrix.csv     : Binary matrix encoding variants for downstream modeling.
-
-Example usage:
-  python3 scripts/preprocess_all.py \
-    --samples transformed_data/variant_samples_small.fasta \
-    --reference-fasta raw_data/NC_045512.2_sequence.fasta \
-    --identity-threshold 92.0 \
-    --out-dir preprocessed
 """
+
 import argparse
 import os
 import sys
@@ -46,22 +27,43 @@ import tempfile
 from Bio import SeqIO
 import subprocess
 import pandas as pd
+import glob
 
-# -------- helpers --------
+# Determine project root (one level up from scripts/)
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+
+
 def setup_logger():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+
 def find_reference(ref_path_hint=None):
+    """
+    Resolve the reference FASTA. If the user provided --reference-fasta,
+    we treat it as either an absolute path or relative to PROJECT_DIR.
+    Otherwise we search PROJECT_DIR/raw_data for NC_045512.2*.fasta.
+    """
     if ref_path_hint:
-        if os.path.isfile(ref_path_hint):
-            return ref_path_hint
+        # if absolute, use it; otherwise resolve under project root
+        ref = ref_path_hint if os.path.isabs(ref_path_hint) \
+              else os.path.join(PROJECT_DIR, ref_path_hint)
+        if os.path.isfile(ref):
+            logging.info(f"Using provided reference FASTA: {ref}")
+            return ref
         else:
-            raise FileNotFoundError(f"Reference file hint provided but not found: {ref_path_hint}")
-    candidates = [f for f in os.listdir("..") if f.startswith("NC_045512.2") and f.endswith((".fasta", ".fa", ".fna"))]
+            raise FileNotFoundError(f"Reference file hint provided but not found: {ref}")
+    # no hint: search in raw_data/
+    search_pattern = os.path.join(PROJECT_DIR, "raw_data", "NC_045512.2*.fasta")
+    candidates = glob.glob(search_pattern)
     if not candidates:
-        raise FileNotFoundError("Could not auto-find reference FASTA (looking for files starting with NC_045512.2*.fasta/.fa/.fna).")
+        raise FileNotFoundError(
+            f"Could not auto-find reference FASTA in {PROJECT_DIR}/raw_data "
+            f"(looking for NC_045512.2*.fasta)"
+        )
     logging.info(f"Auto-located reference FASTA: {candidates[0]}")
     return candidates[0]
+
 
 def extract_reference_id(ref_fasta):
     records = list(SeqIO.parse(ref_fasta, "fasta"))
@@ -71,11 +73,9 @@ def extract_reference_id(ref_fasta):
         logging.warning(f"Reference FASTA has multiple records; using first: {records[0].id}")
     return records[0].id
 
+
 def run_mafft(input_fasta, output_fasta, extra_args=None):
-    cmd = ["mafft", "--auto"]
-    if extra_args:
-        cmd += extra_args
-    cmd += [input_fasta]
+    cmd = ["mafft", "--auto"] + (extra_args or []) + [input_fasta]
     logging.info("Running MAFFT: " + " ".join(cmd))
     with open(output_fasta, "w") as out:
         proc = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE, text=True)
@@ -84,76 +84,69 @@ def run_mafft(input_fasta, output_fasta, extra_args=None):
         raise RuntimeError("MAFFT alignment failed.")
     logging.info(f"MAFFT alignment written to {output_fasta}")
 
+
 def reorder_with_reference_first(aligned_fasta, reference_id, out_fasta):
     records = list(SeqIO.parse(aligned_fasta, "fasta"))
     ref = [r for r in records if r.id == reference_id]
     others = [r for r in records if r.id != reference_id]
     if not ref:
         raise KeyError(f"Reference ID '{reference_id}' not in alignment.")
-    ordered = ref + others
-    SeqIO.write(ordered, out_fasta, "fasta")
+    SeqIO.write(ref + others, out_fasta, "fasta")
     logging.info(f"Reordered alignment with reference first to {out_fasta}")
+
 
 def compute_percent_identity(ref_seq, sample_seq):
     if len(ref_seq) != len(sample_seq):
         raise ValueError("Sequences must be same length for identity.")
-    matches = 0
-    comparables = 0
+    matches = comparables = 0
     for r, s in zip(ref_seq, sample_seq):
         if r == "-" or s == "-":
             continue
         comparables += 1
         if r == s:
             matches += 1
-    return (matches / comparables * 100.0) if comparables > 0 else 0.0
+    return (matches / comparables * 100.0) if comparables else 0.0
 
-def filter_by_identity(aligned_fasta, reference_id, threshold, original_samples_fasta, rejected_dir, filtered_output_fasta, identity_summary_path):
+
+def filter_by_identity(aligned_fasta, reference_id, threshold,
+                       original_samples_fasta, rejected_dir,
+                       filtered_output_fasta, identity_summary_path):
     records = list(SeqIO.parse(aligned_fasta, "fasta"))
-    ref_record = [r for r in records if r.id == reference_id]
+    ref_record = next((r for r in records if r.id == reference_id), None)
     if not ref_record:
         raise KeyError(f"Reference {reference_id} missing from alignment.")
-    ref_record = ref_record[0]
     others = [r for r in records if r.id != reference_id]
 
-    passed = []
-    failed = []
-    identity_table = {}
-
+    passed, failed, identity_table = [], [], {}
     for rec in others:
         pid = compute_percent_identity(str(ref_record.seq), str(rec.seq))
         identity_table[rec.id] = pid
-        if pid >= threshold:
-            passed.append(rec)
-        else:
-            failed.append(rec)
+        (passed if pid >= threshold else failed).append(rec)
 
-    # write filtered alignment: reference + passed
-    filtered = [ref_record] + passed
-    SeqIO.write(filtered, filtered_output_fasta, "fasta")
-    logging.info(f"{len(passed)} sequences passed identity filter; {len(failed)} rejected.")
+    SeqIO.write([ref_record] + passed, filtered_output_fasta, "fasta")
+    logging.info(f"{len(passed)} passed; {len(failed)} rejected.")
 
-    # write rejected originals (unaligned) to rejected_dir
     os.makedirs(rejected_dir, exist_ok=True)
-    orig = {rec.id: rec for rec in SeqIO.parse(original_samples_fasta, "fasta")}
+    orig = {r.id: r for r in SeqIO.parse(original_samples_fasta, "fasta")}
     for rec in failed:
         if rec.id in orig:
-            outp = os.path.join(rejected_dir, f"{rec.id}.fasta")
-            SeqIO.write(orig[rec.id], outp, "fasta")
+            SeqIO.write(orig[rec.id],
+                        os.path.join(rejected_dir, f"{rec.id}.fasta"), "fasta")
         else:
-            logging.warning(f"Rejected sample {rec.id} not found in original FASTA to save.")
+            logging.warning(f"Could not find original record for {rec.id} to reject.")
 
-    # write identity summary
     with open(identity_summary_path, "w") as f:
         f.write("SampleID\tPercentIdentity\tStatus\n")
         for sid, pid in sorted(identity_table.items()):
             status = "PASS" if pid >= threshold else "REJECT"
             f.write(f"{sid}\t{pid:.2f}\t{status}\n")
-    logging.info(f"Identity summary written to {identity_summary_path}")
+    logging.info(f"Identity summary -> {identity_summary_path}")
 
     return filtered_output_fasta
 
+
 def build_binary_variant_matrix(seqs_fasta, reference_id, drop_invariant=True):
-    seqs = {rec.id: str(rec.seq).upper() for rec in SeqIO.parse(seqs_fasta, "fasta")}
+    seqs = {r.id: str(r.seq).upper() for r in SeqIO.parse(seqs_fasta, "fasta")}
     ref_seq = seqs[reference_id]
     length = len(ref_seq)
     samples = sorted(seqs.keys())
@@ -161,8 +154,7 @@ def build_binary_variant_matrix(seqs_fasta, reference_id, drop_invariant=True):
 
     for pos in range(length):
         ref_base = ref_seq[pos]
-        if ref_base == "-":
-            continue
+        if ref_base == "-": continue
         for sample in samples:
             base = seqs[sample][pos]
             if base == "-" or base == ref_base:
@@ -170,78 +162,68 @@ def build_binary_variant_matrix(seqs_fasta, reference_id, drop_invariant=True):
             col = f"pos{pos+1}_{ref_base}>{base}"
             variant_dict.setdefault(col, {})[sample] = 1
 
-    # DataFrame assembly
-    cols = sorted(variant_dict.keys())
-    data = []
-    for sample in samples:
-        row = [variant_dict[col].get(sample, 0) for col in cols]
-        data.append(row)
-    df = pd.DataFrame(data, index=samples, columns=cols, dtype=int)
-
+    df = pd.DataFrame(
+        [[variant_dict[col].get(s, 0) for col in sorted(variant_dict)]
+         for s in samples],
+        index=samples, columns=sorted(variant_dict), dtype=int
+    )
     if drop_invariant:
         df = df.loc[:, df.nunique() > 1]
-
     return df
 
-# -------- main pipeline --------
+
 def main():
-    parser = argparse.ArgumentParser(description="Full preprocessing: align, filter by identity, encode binary variants.")
-    parser.add_argument("--samples", required=True, help="Unaligned sample FASTA.")
-    parser.add_argument("--reference-fasta", help="Reference FASTA (auto-detect if omitted).")
-    parser.add_argument("--identity-threshold", type=float, default=90.0, help="Minimum % identity to keep sample.")
-    parser.add_argument("--out-dir", default="preprocessed_full", help="Root output directory.")
-    parser.add_argument("--mafft-args", nargs="*", help="Extra arguments to MAFFT.")
+    parser = argparse.ArgumentParser(
+        description="Full preprocessing: align, filter, and encode variants."
+    )
+    parser.add_argument("--samples",            required=True)
+    parser.add_argument("--reference-fasta",    help="Path or relative path to reference FASTA")
+    parser.add_argument("--identity-threshold", type=float, default=90.0)
+    parser.add_argument("--out-dir",            default="preprocessed_full")
+    parser.add_argument("--mafft-args", nargs="*")
     args = parser.parse_args()
 
     setup_logger()
+    out = args.out_dir
+    os.makedirs(out, exist_ok=True)
 
-    out_root = args.out_dir
-    os.makedirs(out_root, exist_ok=True)
-    alignment_raw = os.path.join(out_root, "aligned_raw.fasta")
-    alignment_filtered = os.path.join(out_root, "aligned_filtered.fasta")
-    identity_summary = os.path.join(out_root, "identity_summary.tsv")
-    variant_matrix_path = os.path.join(out_root, "variant_binary_matrix.csv")
-    rejected_dir = os.path.join(out_root, "rejected")
-
-    # find reference
+    # 1) Resolve reference
     try:
         ref_path = find_reference(args.reference_fasta)
     except FileNotFoundError as e:
-        logging.error(str(e))
-        sys.exit(1)
-    reference_id = extract_reference_id(ref_path)
-    logging.info(f"Using reference: {ref_path} (ID: {reference_id})")
+        logging.error(str(e)); sys.exit(1)
+    ref_id = extract_reference_id(ref_path)
+    logging.info(f"Reference -> {ref_path} (ID: {ref_id})")
 
-    # concatenate and align
+    # 2) Align
+    raw_align = os.path.join(out, "aligned_raw.fasta")
     with tempfile.TemporaryDirectory() as tmp:
-        combined = os.path.join(tmp, "combined.fasta")
-        # merge reference + samples
-        with open(combined, "w") as outf:
-            for p in [ref_path, args.samples]:
-                with open(p) as inf:
-                    outf.write(inf.read())
-        run_mafft(combined, alignment_raw, extra_args=args.mafft_args)
+        combo = os.path.join(tmp, "combo.fasta")
+        with open(combo, "w") as w:
+            for p in (ref_path, args.samples):
+                w.write(open(p).read())
+        run_mafft(combo, raw_align, extra_args=args.mafft_args)
 
-    # reorder so reference is first
-    reorder_with_reference_first(alignment_raw, reference_id, alignment_raw + ".reordered")
-    os.replace(alignment_raw + ".reordered", alignment_raw)
+    # 3) Reorder
+    reordered = raw_align + ".reordered"
+    reorder_with_reference_first(raw_align, ref_id, reordered)
+    os.replace(reordered, raw_align)
 
-    # filter by identity
-    filtered_fasta = filter_by_identity(
-        alignment_raw,
-        reference_id,
-        threshold=args.identity_threshold,
-        original_samples_fasta=args.samples,
-        rejected_dir=rejected_dir,
-        filtered_output_fasta=alignment_filtered,
-        identity_summary_path=identity_summary
+    # 4) Filter
+    filt = os.path.join(out, "aligned_filtered.fasta")
+    summary = os.path.join(out, "identity_summary.tsv")
+    rej_dir = os.path.join(out, "rejected")
+    filtered = filter_by_identity(
+        raw_align, ref_id, args.identity_threshold,
+        args.samples, rej_dir, filt, summary
     )
 
-    # encode variants
-    logging.info("Building binary variant matrix from filtered alignment")
-    variant_df = build_binary_variant_matrix(filtered_fasta, reference_id, drop_invariant=True)
-    variant_df.to_csv(variant_matrix_path)
-    logging.info(f"Variant binary matrix saved to {variant_matrix_path} (shape: {variant_df.shape})")
+    # 5) Encode variants
+    bin_mat = build_binary_variant_matrix(filtered, ref_id)
+    csv_out = os.path.join(out, "variant_binary_matrix.csv")
+    bin_mat.to_csv(csv_out)
+    logging.info(f"Variant matrix saved to {csv_out} (shape={bin_mat.shape})")
+
 
 if __name__ == "__main__":
     main()
