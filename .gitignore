@@ -11,9 +11,10 @@ __pycache__/
 
 # Nextflow work and output
 work/
-analysis_output/
+analysis_output*/
 *.pyc
 __pycache__/
 .venv/
 myenv/
-*.log
+*.nextflow*
+*out/
