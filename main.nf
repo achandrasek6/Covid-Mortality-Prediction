@@ -9,50 +9,61 @@ params.model                ?: error("Please set --model")
 params.scaler               ?: error("Please set --scaler")
 params.chunk_size           = params.chunk_size ?: 10
 params.identity_thresh      = params.identity_thresh ?: 92.0
+params.outdir               = params.outdir ?: "results"
 
-// Derive outdir from FASTA basename
-def base = file(params.samples).getName().replaceFirst(/\.[^.]+$/, '')
-params.outdir = "${base}_out"
-println "[INFO] Writing merged outputs to: ${params.outdir}"
+println "[INFO] Writing outputs to: ${params.outdir}"
 
 def venv = "${workflow.projectDir}/myenv/bin/python3"
 
 workflow {
-    // 1) Split and preprocess
-    chunks_ch   = Channel.fromPath(params.samples)
-                        .ifEmpty { error "Cannot find FASTA: ${params.samples}" }
-                        .splitFasta(by: params.chunk_size, file: true)
-                        .map { fasta -> tuple(fasta.baseName, fasta) }
-    preproc_ch  = preprocessChunk(chunks_ch)
+    // 1) Create channel for multiple FASTA files
+    fasta_files_ch = Channel.fromPath(params.samples)
+                           .ifEmpty { error "Cannot find FASTA files: ${params.samples}" }
+                           .map { fasta ->
+                               def basename = fasta.getName().replaceFirst(/\.[^.]+$/, '')
+                               tuple(basename, fasta)
+                           }
 
-    // 2) Predict on every chunk
-    preds_ch    = predictChunk(
-                    preproc_ch.map { name, mat, aln, sum ->
-                        tuple(mat, aln, name)
-                    }
-                  )
+    // 2) Split each FASTA file into chunks and preprocess
+    chunks_ch = fasta_files_ch
+                  .flatMap { basename, fasta ->
+                      fasta.splitFasta(by: params.chunk_size, file: true)
+                           .collect { chunk -> tuple(basename, chunk.baseName, chunk) }
+                  }
 
-    // 3) Merge ALL chunk‐level predictions into one CSV
-    mergePredictions(preds_ch.collect())
+    preproc_ch = preprocessChunk(chunks_ch)
 
-    // 4) Merge ALL chunk‐level failures into one CSV
-    mergeFailures(
-      preproc_ch
-        .map { name, mat, aln, sum -> sum }
-        .collect()
-    )
+    // 3) Predict on every chunk
+    preds_ch = predictChunk(
+                 preproc_ch.map { basename, name, mat, aln, sum ->
+                     tuple(basename, mat, aln, name)
+                 }
+               )
+
+    // 4) Group predictions and failures by original FASTA file
+    preds_grouped = preds_ch.map { basename, pred_file -> tuple(basename, pred_file) }
+                            .groupTuple()
+
+    failures_grouped = preproc_ch.map { basename, name, mat, aln, sum -> tuple(basename, sum) }
+                                 .groupTuple()
+
+    // 5) Merge predictions per FASTA file
+    mergePredictions(preds_grouped)
+
+    // 6) Merge failures per FASTA file
+    mergeFailures(failures_grouped)
 }
 
 
 process preprocessChunk {
-    tag { name }
+    tag { "${basename}_${name}" }
     errorStrategy 'ignore'
 
     input:
-      tuple val(name), path(chunkFasta)
+      tuple val(basename), val(name), path(chunkFasta)
 
     output:
-      tuple val(name),
+      tuple val(basename), val(name),
             path("${name}_variant_binary_matrix.csv"),
             path("${name}_aligned_filtered.fasta"),
             path("${name}_summary.tsv")
@@ -73,13 +84,13 @@ process preprocessChunk {
 
 
 process predictChunk {
-    tag { name }
+    tag { "${basename}_${name}" }
 
     input:
-      tuple path(variantMatrix), path(alignedFasta), val(name)
+      tuple val(basename), path(variantMatrix), path(alignedFasta), val(name)
 
     output:
-      path("predictions_${name}.csv")
+      tuple val(basename), path("predictions_${name}.csv")
 
     script:
     """
@@ -98,13 +109,14 @@ process predictChunk {
 
 
 process mergePredictions {
-    publishDir params.outdir, mode: 'copy'
+    tag { basename }
+    publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      path predsFiles     // List<Path> of all predictions_*.csv
+      tuple val(basename), path(predsFiles)     // List<Path> of all predictions_*.csv for this basename
 
     output:
-      path "all_predictions.csv"
+      tuple val(basename), path("predictions.csv")
 
     script:
     """
@@ -112,25 +124,26 @@ process mergePredictions {
       FNR==1 { if (NR==1) print "sample,predicted_cfr_fraction"; next }
       \$1=="NC_045512.2" { next }
       { print }
-    ' ${predsFiles.join(' ')} > all_predictions.csv
+    ' ${predsFiles.join(' ')} > predictions.csv
     """
 }
 
 
 process mergeFailures {
-    publishDir params.outdir, mode: 'copy'
+    tag { basename }
+    publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      path summaryFiles  // List<Path> of all *_summary.tsv
+      tuple val(basename), path(summaryFiles)  // List<Path> of all *_summary.tsv for this basename
 
     output:
-      path "all_failures.csv"
+      tuple val(basename), path("failures.csv")
 
     script:
     """
-    echo "sample" > all_failures.csv
+    echo "sample" > failures.csv
     tr -d '\\r' < ${summaryFiles.join(' ')} \\
       | awk -F'\\t' 'FNR>1 && \$3 ~ /REJECT/ { print \$1 }' \\
-      >> all_failures.csv
+      >> failures.csv
     """
 }
