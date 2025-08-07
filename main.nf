@@ -13,7 +13,8 @@ params.outdir               = params.outdir ?: "results"
 
 println "[INFO] Writing outputs to: ${params.outdir}"
 
-def venv = "${workflow.projectDir}/myenv/bin/python3"
+// Use mamba environment instead of venv
+def python_cmd = "python3"
 
 workflow {
     // 1) Create channel for multiple FASTA files
@@ -58,6 +59,7 @@ workflow {
 process preprocessChunk {
     tag { "${basename}_${name}" }
     errorStrategy 'ignore'
+    conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
       tuple val(basename), val(name), path(chunkFasta)
@@ -70,7 +72,7 @@ process preprocessChunk {
 
     script:
     """
-    ${venv} ${workflow.projectDir}/scripts/preprocess_all.py \
+    ${python_cmd} ${workflow.projectDir}/scripts/preprocess_all.py \
       --samples            ${chunkFasta} \
       --reference-fasta    ${params.reference_fasta} \
       --identity-threshold ${params.identity_thresh} \
@@ -85,6 +87,7 @@ process preprocessChunk {
 
 process predictChunk {
     tag { "${basename}_${name}" }
+    conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
       tuple val(basename), path(variantMatrix), path(alignedFasta), val(name)
@@ -94,7 +97,7 @@ process predictChunk {
 
     script:
     """
-    ${venv} ${workflow.projectDir}/scripts/collapse_and_predict.py \
+    ${python_cmd} ${workflow.projectDir}/scripts/collapse_and_predict.py \
       --variant-matrix       ${variantMatrix} \
       --aligned-fasta        ${alignedFasta} \
       --reference-id         NC_045512.2 \
