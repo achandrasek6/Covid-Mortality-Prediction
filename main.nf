@@ -13,7 +13,6 @@ params.outdir               = params.outdir ?: "results"
 
 println "[INFO] Writing outputs to: ${params.outdir}"
 
-// Use mamba environment instead of venv
 def python_cmd = "python3"
 
 workflow {
@@ -28,16 +27,21 @@ workflow {
     // 2) Split each FASTA file into chunks and preprocess
     chunks_ch = fasta_files_ch
                   .flatMap { basename, fasta ->
-                      fasta.splitFasta(by: params.chunk_size, file: true)
-                           .collect { chunk -> tuple(basename, chunk.baseName, chunk) }
+                      def chunks = fasta.splitFasta(by: params.chunk_size, file: true)
+                      def chunkList = []
+                      chunks.eachWithIndex { chunk, index ->
+                          def chunkName = "${basename}.${index + 1}"
+                          chunkList.add(tuple(basename, chunkName, chunk))
+                      }
+                      return chunkList
                   }
 
     preproc_ch = preprocessChunk(chunks_ch)
 
     // 3) Predict on every chunk
     preds_ch = predictChunk(
-                 preproc_ch.map { basename, name, mat, aln, sum ->
-                     tuple(basename, mat, aln, name)
+                 preproc_ch.map { basename, chunkName, mat, aln, sum ->
+                     tuple(basename, mat, aln, chunkName)
                  }
                )
 
@@ -45,7 +49,7 @@ workflow {
     preds_grouped = preds_ch.map { basename, pred_file -> tuple(basename, pred_file) }
                             .groupTuple()
 
-    failures_grouped = preproc_ch.map { basename, name, mat, aln, sum -> tuple(basename, sum) }
+    failures_grouped = preproc_ch.map { basename, chunkName, mat, aln, sum -> tuple(basename, sum) }
                                  .groupTuple()
 
     // 5) Merge predictions per FASTA file
@@ -57,18 +61,18 @@ workflow {
 
 
 process preprocessChunk {
-    tag { "${basename}_${name}" }
+    tag { chunkName }
     errorStrategy 'ignore'
     conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
-      tuple val(basename), val(name), path(chunkFasta)
+      tuple val(basename), val(chunkName), path(chunkFasta)
 
     output:
-      tuple val(basename), val(name),
-            path("${name}_variant_binary_matrix.csv"),
-            path("${name}_aligned_filtered.fasta"),
-            path("${name}_summary.tsv")
+      tuple val(basename), val(chunkName),
+            path("${chunkName}_variant_binary_matrix.csv"),
+            path("${chunkName}_aligned_filtered.fasta"),
+            path("${chunkName}_summary.tsv")
 
     script:
     """
@@ -76,24 +80,24 @@ process preprocessChunk {
       --samples            ${chunkFasta} \
       --reference-fasta    ${params.reference_fasta} \
       --identity-threshold ${params.identity_thresh} \
-      --out-dir            ${name}_pre
+      --out-dir            ${chunkName}_pre
 
-    mv ${name}_pre/variant_binary_matrix.csv   ${name}_variant_binary_matrix.csv
-    mv ${name}_pre/aligned_filtered.fasta      ${name}_aligned_filtered.fasta
-    mv ${name}_pre/identity_summary.tsv        ${name}_summary.tsv
+    mv ${chunkName}_pre/variant_binary_matrix.csv   ${chunkName}_variant_binary_matrix.csv
+    mv ${chunkName}_pre/aligned_filtered.fasta      ${chunkName}_aligned_filtered.fasta
+    mv ${chunkName}_pre/identity_summary.tsv        ${chunkName}_summary.tsv
     """
 }
 
 
 process predictChunk {
-    tag { "${basename}_${name}" }
+    tag { chunkName }
     conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
-      tuple val(basename), path(variantMatrix), path(alignedFasta), val(name)
+      tuple val(basename), path(variantMatrix), path(alignedFasta), val(chunkName)
 
     output:
-      tuple val(basename), path("predictions_${name}.csv")
+      tuple val(basename), path("predictions_${chunkName}.csv")
 
     script:
     """
@@ -104,9 +108,9 @@ process predictChunk {
       --train-feature-matrix ${workflow.projectDir}/${params.train_feature_matrix} \
       --model                ${workflow.projectDir}/${params.model} \
       --scaler               ${workflow.projectDir}/${params.scaler} \
-      --out-dir              ${name}_pred
+      --out-dir              ${chunkName}_pred
 
-    mv ${name}_pred/predictions.csv predictions_${name}.csv
+    mv ${chunkName}_pred/predictions.csv predictions_${chunkName}.csv
     """
 }
 
@@ -116,7 +120,7 @@ process mergePredictions {
     publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      tuple val(basename), path(predsFiles)     // List<Path> of all predictions_*.csv for this basename
+      tuple val(basename), path(predsFiles)
 
     output:
       tuple val(basename), path("predictions.csv")
@@ -137,7 +141,7 @@ process mergeFailures {
     publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      tuple val(basename), path(summaryFiles)  // List<Path> of all *_summary.tsv for this basename
+      tuple val(basename), path(summaryFiles)
 
     output:
       tuple val(basename), path("failures.csv")
