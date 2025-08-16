@@ -9,9 +9,8 @@ params.model = null
 params.scaler = null
 params.chunk_size = 10
 params.identity_thresh = 92.0
-params.outdir = "results"
-
-println "[INFO] Writing outputs to: ${params.outdir}"
+params.outdir = null
+params.verbose = false  // New verbosity parameter
 
 def python_cmd = "python3"
 
@@ -22,6 +21,16 @@ workflow {
     if (!params.train_feature_matrix) error "Please set --train_feature_matrix"
     if (!params.model) error "Please set --model"
     if (!params.scaler) error "Please set --scaler"
+    if (!params.outdir) error "Please set --outdir (output directory is required)"
+
+    // Always show where outputs are being written
+    println "[INFO] Writing outputs to: ${params.outdir}"
+
+    // Show additional startup info only if verbose
+    if (params.verbose) {
+        println "[INFO] Chunk size: ${params.chunk_size}"
+        println "[INFO] Identity threshold: ${params.identity_thresh}%"
+    }
 
     // Stage static artifacts as channels
     reference_fasta_ch = Channel.fromPath(params.reference_fasta)
@@ -94,7 +103,25 @@ workflow {
 
     // Merge results
     mergePredictions(preds_grouped)
-    mergeFailures(failures_grouped)
+
+    // Process failures and show summary if verbose
+    failure_results = mergeFailures(failures_grouped)
+
+    // Display failure summary only if verbose mode is enabled
+    if (params.verbose) {
+        failure_results.subscribe { basename, failure_file ->
+            if (failure_file.exists() && failure_file.size() > 0) {
+                def lines = failure_file.readLines()
+                if (lines.size() > 1) {
+                    println "[INFO] ✗ Found ${lines.size() - 1} failures for sample: ${basename}"
+                } else {
+                    println "[INFO] ✓ No failures found for sample: ${basename}"
+                }
+            } else {
+                println "[INFO] ✓ No failures found for sample: ${basename}"
+            }
+        }
+    }
 }
 
 process preprocessChunk {
@@ -183,7 +210,17 @@ process mergePredictions {
 
 process mergeFailures {
     tag { basename }
-    publishDir "${params.outdir}/${basename}", mode: 'copy'
+    publishDir "${params.outdir}/${basename}", mode: 'copy', saveAs: { filename ->
+        // Check if file has actual failures (more than just header)
+        def file = new File("${task.workDir}/${filename}")
+        if (file.exists()) {
+            def lines = file.readLines()
+            if (lines.size() > 1) {
+                return filename  // Publish if there are failures
+            }
+        }
+        return null  // Don't publish if no failures
+    }
 
     input:
     tuple val(basename), path(summaryFiles)
@@ -193,7 +230,10 @@ process mergeFailures {
 
     script:
     """
+    # Create failures file with header
     echo "sample" > failures.csv
+
+    # Extract failures from summary files
     tr -d '\\r' < ${summaryFiles.join(' ')} \\
       | awk -F'\\t' 'FNR>1 && \$3 ~ /REJECT/ { print \$1 }' \\
       >> failures.csv

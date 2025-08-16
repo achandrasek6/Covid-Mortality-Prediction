@@ -18,4 +18,4 @@ __pycache__/
 myenv/
 *.nextflow*
 *out/
-results_test*/
+results*/
