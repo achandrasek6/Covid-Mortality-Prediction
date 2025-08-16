@@ -2,21 +2,48 @@
 nextflow.enable.dsl = 2
 
 // Parameters
-params.samples              ?: error("Please set --samples")
-params.reference_fasta      ?: error("Please set --reference_fasta")
-params.train_feature_matrix ?: error("Please set --train_feature_matrix")
-params.model                ?: error("Please set --model")
-params.scaler               ?: error("Please set --scaler")
-params.chunk_size           = params.chunk_size ?: 10
-params.identity_thresh      = params.identity_thresh ?: 92.0
-params.outdir               = params.outdir ?: "results"
+params.samples = null
+params.reference_fasta = null
+params.train_feature_matrix = null
+params.model = null
+params.scaler = null
+params.chunk_size = 10
+params.identity_thresh = 92.0
+params.outdir = "results"
 
 println "[INFO] Writing outputs to: ${params.outdir}"
 
 def python_cmd = "python3"
 
 workflow {
-    // 1) Create channel for multiple FASTA files
+    // Parameter validation
+    if (!params.samples) error "Please set --samples"
+    if (!params.reference_fasta) error "Please set --reference_fasta"
+    if (!params.train_feature_matrix) error "Please set --train_feature_matrix"
+    if (!params.model) error "Please set --model"
+    if (!params.scaler) error "Please set --scaler"
+
+    // Stage static artifacts as channels
+    reference_fasta_ch = Channel.fromPath(params.reference_fasta)
+                               .ifEmpty { error "Cannot find reference FASTA: ${params.reference_fasta}" }
+
+    train_feature_matrix_ch = Channel.fromPath(params.train_feature_matrix)
+                                    .ifEmpty { error "Cannot find train feature matrix: ${params.train_feature_matrix}" }
+
+    model_ch = Channel.fromPath(params.model)
+                     .ifEmpty { error "Cannot find model: ${params.model}" }
+
+    scaler_ch = Channel.fromPath(params.scaler)
+                      .ifEmpty { error "Cannot find scaler: ${params.scaler}" }
+
+    // Stage Python scripts
+    preprocess_script_ch = Channel.fromPath("${workflow.projectDir}/scripts/preprocess_all.py")
+                                 .ifEmpty { error "Cannot find preprocess_all.py script" }
+
+    predict_script_ch = Channel.fromPath("${workflow.projectDir}/scripts/collapse_and_predict.py")
+                              .ifEmpty { error "Cannot find collapse_and_predict.py script" }
+
+    // Create channel for multiple FASTA files
     fasta_files_ch = Channel.fromPath(params.samples)
                            .ifEmpty { error "Cannot find FASTA files: ${params.samples}" }
                            .map { fasta ->
@@ -24,7 +51,7 @@ workflow {
                                tuple(basename, fasta)
                            }
 
-    // 2) Split each FASTA file into chunks and preprocess
+    // Split each FASTA file into chunks
     chunks_ch = fasta_files_ch
                   .flatMap { basename, fasta ->
                       def chunks = fasta.splitFasta(by: params.chunk_size, file: true)
@@ -36,29 +63,39 @@ workflow {
                       return chunkList
                   }
 
-    preproc_ch = preprocessChunk(chunks_ch)
+    // Preprocess chunks
+    preproc_ch = preprocessChunk(
+        chunks_ch,
+        reference_fasta_ch.first(),
+        preprocess_script_ch.first()
+    )
 
-    // 3) Predict on every chunk
+    // Predict on chunks
     preds_ch = predictChunk(
-                 preproc_ch.map { basename, chunkName, mat, aln, sum ->
-                     tuple(basename, mat, aln, chunkName)
-                 }
-               )
+        preproc_ch.map { basename, chunkName, mat, aln, sum ->
+            tuple(basename, mat, aln, chunkName)
+        },
+        train_feature_matrix_ch.first(),
+        model_ch.first(),
+        scaler_ch.first(),
+        predict_script_ch.first()
+    )
 
-    // 4) Group predictions and failures by original FASTA file
-    preds_grouped = preds_ch.map { basename, pred_file -> tuple(basename, pred_file) }
+    // Group results by sample
+    preds_grouped = preds_ch.map { basename, pred_file ->
+                                tuple(basename, pred_file)
+                            }
                             .groupTuple()
 
-    failures_grouped = preproc_ch.map { basename, chunkName, mat, aln, sum -> tuple(basename, sum) }
+    failures_grouped = preproc_ch.map { basename, chunkName, mat, aln, sum ->
+                                      tuple(basename, sum)
+                                  }
                                  .groupTuple()
 
-    // 5) Merge predictions per FASTA file
+    // Merge results
     mergePredictions(preds_grouped)
-
-    // 6) Merge failures per FASTA file
     mergeFailures(failures_grouped)
 }
-
 
 process preprocessChunk {
     tag { chunkName }
@@ -66,19 +103,26 @@ process preprocessChunk {
     conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
-      tuple val(basename), val(chunkName), path(chunkFasta)
+    tuple val(basename), val(chunkName), path(chunkFasta)
+    path reference_fasta
+    path preprocess_script
 
     output:
-      tuple val(basename), val(chunkName),
-            path("${chunkName}_variant_binary_matrix.csv"),
-            path("${chunkName}_aligned_filtered.fasta"),
-            path("${chunkName}_summary.tsv")
+    tuple val(basename), val(chunkName),
+          path("${chunkName}_variant_binary_matrix.csv"),
+          path("${chunkName}_aligned_filtered.fasta"),
+          path("${chunkName}_summary.tsv")
 
     script:
     """
-    ${python_cmd} ${workflow.projectDir}/scripts/preprocess_all.py \
-      --samples            ${chunkFasta} \
-      --reference-fasta    ${params.reference_fasta} \
+    # Use absolute paths to ensure the script can find the files
+    CHUNK_FASTA_ABS=\$(readlink -f ${chunkFasta})
+    REF_FASTA_ABS=\$(readlink -f ${reference_fasta})
+    SCRIPT_ABS=\$(readlink -f ${preprocess_script})
+
+    ${python_cmd} \$SCRIPT_ABS \
+      --samples            \$CHUNK_FASTA_ABS \
+      --reference-fasta    \$REF_FASTA_ABS \
       --identity-threshold ${params.identity_thresh} \
       --out-dir            ${chunkName}_pre
 
@@ -88,42 +132,44 @@ process preprocessChunk {
     """
 }
 
-
 process predictChunk {
     tag { chunkName }
     conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
-      tuple val(basename), path(variantMatrix), path(alignedFasta), val(chunkName)
+    tuple val(basename), path(variantMatrix), path(alignedFasta), val(chunkName)
+    path train_feature_matrix
+    path model
+    path scaler
+    path predict_script
 
     output:
-      tuple val(basename), path("predictions_${chunkName}.csv")
+    tuple val(basename), path("predictions_${chunkName}.csv")
 
     script:
     """
-    ${python_cmd} ${workflow.projectDir}/scripts/collapse_and_predict.py \
+    ${python_cmd} ${predict_script} \
       --variant-matrix       ${variantMatrix} \
       --aligned-fasta        ${alignedFasta} \
       --reference-id         NC_045512.2 \
-      --train-feature-matrix ${workflow.projectDir}/${params.train_feature_matrix} \
-      --model                ${workflow.projectDir}/${params.model} \
-      --scaler               ${workflow.projectDir}/${params.scaler} \
+      --train-feature-matrix ${train_feature_matrix} \
+      --model                ${model} \
+      --scaler               ${scaler} \
       --out-dir              ${chunkName}_pred
 
     mv ${chunkName}_pred/predictions.csv predictions_${chunkName}.csv
     """
 }
 
-
 process mergePredictions {
     tag { basename }
     publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      tuple val(basename), path(predsFiles)
+    tuple val(basename), path(predsFiles)
 
     output:
-      tuple val(basename), path("predictions.csv")
+    tuple val(basename), path("predictions.csv")
 
     script:
     """
@@ -135,16 +181,15 @@ process mergePredictions {
     """
 }
 
-
 process mergeFailures {
     tag { basename }
     publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
-      tuple val(basename), path(summaryFiles)
+    tuple val(basename), path(summaryFiles)
 
     output:
-      tuple val(basename), path("failures.csv")
+    tuple val(basename), path("failures.csv")
 
     script:
     """
