@@ -302,19 +302,135 @@ def main():
         print("WARNING: 'shap' is not installed. Skipping SHAP plots.", file=sys.stderr)
     else:
         try:
-            # For linear models, use LinearExplainer with link='identity' for regression
+
+            import matplotlib.pyplot as plt
+            from matplotlib import colors as mcolors
+            from matplotlib.lines import Line2D
+
+            # Linear model on *scaled* features
             explainer = shap.LinearExplainer(model, X_train, feature_perturbation="interventional")
-            # Limit sample size for responsiveness
-            X_shap = X_test if len(X_test) <= args.max_shap_samples else X_test[:args.max_shap_samples]
+
+            # sample MANY rows (random, not a [:n] slice)
+            n = min(args.max_shap_samples, X_test.shape[0])  # e.g., --max_shap_samples 500
+            X_shap = shap.utils.sample(X_test, n, random_state=42)
+
             shap_values = explainer.shap_values(X_shap)
+            sv = np.asarray(shap_values)  # (n_samples, n_features)
 
-            # Save plots
-            plot_shap_summary(shap_values, feature_names, args.outdir)
+            # ---- Density strip (no jitter; alpha ~ local density) ----
+            max_display = 20
+            bins = 50
+            min_alpha, max_alpha = 0.06, 0.90
 
-            # Save importances
-            save_shap_importances(shap_values, feature_names, args.outdir / "shap_importances.csv")
+            mean_abs = np.mean(np.abs(sv), axis=0)
+            top_idx = np.argsort(mean_abs)[-max_display:][::-1]
+            feat_names = np.asarray(feature_names)
+            cmap = plt.get_cmap("coolwarm")
+
+            # If you have RAW (unscaled) features aligned to X_shap, use them for color:
+            # X_color = X_test_df.values
+            X_color = X_shap  # fallback: uses the same matrix
+
+            fig, ax = plt.subplots(figsize=(8, 10))
+
+            # plot rows with PER-FEATURE coloring (robust) to avoid "all blue"
+            for row, j in enumerate(top_idx):
+                xvals = sv[:, j]  # SHAP values for feature j across samples
+                fvals = X_color[:, j]  # values for color on this row
+
+                # Decide coloring mode: binary vs continuous (robust per-feature norm)
+                valid = fvals[~np.isnan(fvals)]
+                uniq = np.unique(valid)
+                is_binary = uniq.size <= 3 and set(np.round(uniq, 6)).issubset({0, 1})
+
+                if is_binary:
+                    # two fixed colors for 0/1
+                    rgba = np.zeros((len(fvals), 4))
+                    rgba[fvals > 0.5] = (0.79, 0.19, 0.19, 1.0)  # red-ish (high)
+                    rgba[fvals <= 0.5] = (0.18, 0.40, 0.77, 1.0)  # blue-ish (low)
+                else:
+                    # robust per-feature normalization (5th–95th percentile)
+                    lo = np.nanpercentile(fvals, 5)
+                    hi = np.nanpercentile(fvals, 95)
+                    if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+                        lo, hi = np.nanmin(fvals), np.nanmax(fvals)
+                        if not np.isfinite(lo) or lo == hi:
+                            lo, hi = -1.0, 1.0  # last resort
+                    norm = mcolors.Normalize(vmin=lo, vmax=hi)
+                    rgba = cmap(norm(fvals))
+
+                # alpha by 1D histogram density on the SHAP axis
+                counts, edges = np.histogram(xvals, bins=bins)
+                bidx = np.digitize(xvals, edges) - 1
+                bidx = np.clip(bidx, 0, len(counts) - 1)
+                dens = counts[bidx].astype(float)
+                if dens.max() > 0:
+                    dens = (dens - dens.min()) / (dens.max() - dens.min())
+                alpha = min_alpha + (max_alpha - min_alpha) * dens
+                rgba[:, 3] = alpha
+
+                # plot all points at the same y (no vertical jitter)
+                y = np.full_like(xvals, row, dtype=float)
+                ax.scatter(xvals, y, c=rgba, s=18, linewidths=0)
+
+            ax.set_yticks(range(len(top_idx)))
+            ax.set_yticklabels(feat_names[top_idx])
+            ax.set_xlabel("SHAP value (impact on model output)")
+            ax.set_ylim(-0.5, len(top_idx) - 0.5)
+            ax.axvline(0.0, color="grey", lw=1)
+
+            # Legends: opacity (density) + color meaning
+            alpha_handles = [
+                Line2D([0], [0], marker='o', color='none', label='Low density',
+                       markerfacecolor=(0.3, 0.5, 0.9, min_alpha), markersize=8),
+                Line2D([0], [0], marker='o', color='none', label='High density',
+                       markerfacecolor=(0.3, 0.5, 0.9, max_alpha), markersize=8),
+            ]
+            color_handles = [
+                Line2D([0], [0], marker='o', color='none',
+                       markerfacecolor=(0.18, 0.40, 0.77, 1.0), label='Reference / Absent', markersize=8),
+                Line2D([0], [0], marker='o', color='none',
+                       markerfacecolor=(0.79, 0.19, 0.19, 1.0), label='Variant present', markersize=8),
+            ]
+            ax.legend(handles=color_handles + alpha_handles, title="Encoding", loc="upper right", frameon=False)
+
+            fig.tight_layout()
+            fig.savefig(args.outdir / "shap_strip_density.png", dpi=200, bbox_inches="tight")
+            plt.close(fig)
+
+            # importances CSV (unchanged)
+            save_shap_importances(sv, feature_names, args.outdir / "shap_importances.csv")
+
         except Exception as e:
             print(f"WARNING: SHAP failed: {e}", file=sys.stderr)
+
+    # --- Global importance bar (Top 10) ---
+
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
+    top_k = 10
+    mean_abs = np.mean(np.abs(sv), axis=0)  # mean(|SHAP|) per feature
+    order = np.argsort(mean_abs)[-top_k:][::-1]  # indices of top-k, descending
+    feat_top = np.asarray(feature_names)[order]
+    vals_top = mean_abs[order]
+
+    # plot
+    fig, ax = plt.subplots(figsize=(7.5, 5.0))
+    ax.barh(feat_top[::-1], vals_top[::-1])  # reverse for top at bottom
+    ax.set_xlabel("mean(|SHAP value|)")
+    ax.set_ylabel("Feature")
+    # annotate values at bar ends
+    for i, v in enumerate(vals_top[::-1]):
+        ax.text(v, i, f" {v:.4g}", va="center")
+
+    fig.tight_layout()
+    fig.savefig(args.outdir / "shap_top10_bar.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    # save CSV
+    pd.DataFrame({"feature": feat_top, "mean_abs_shap": vals_top}) \
+        .to_csv(args.outdir / "shap_top10.csv", index=False)
 
     #== LIME ===
     if LimeTabularExplainer is None:
