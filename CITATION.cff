@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it."
+title: "covid-mortality-prediction: A reproducible pipeline for SARS-CoV-2 CFR prediction"
+authors:
+  - family-names: Chandrasekaran
+    given-names: Aravind
+license: Apache-2.0
+repository-code: "https://github.com/achandrasek6/covid-mortality-prediction"
+version: "0.1.0"
+date-released: "2025-08-20"
+
+preferred-citation:
+  type: article
+  title: "Genome-Driven Prediction of SARS-CoV-2 Case-Fatality Rate"
+  authors:
+    - family-names: Chandrasekaran
+      given-names: Aravind
+  journal: "Wisconsin Online Collaboratives"
+  year: 2025
