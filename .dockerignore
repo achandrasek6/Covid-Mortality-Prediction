@@ -1,0 +1,10 @@
+.git
+work/
+results/
+out/
+logs/
+__pycache__/
+*.pyc
+.nextflow/
+*.nextflow.log
+data/
