@@ -45,6 +45,7 @@ flowchart LR
   D --> I["Collapse features for new genomes"]
   F --> I
   I --> J["Predict CFR"]
+```
 
 ---
 
