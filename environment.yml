@@ -1,0 +1,23 @@
+name: covid-lasso-pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+channel_priority: strict
+dependencies:
+  # python stack
+  - python=3.12.3
+  - pandas=2.3.0
+  - scikit-learn=1.7.0
+  - biopython=1.85
+  - joblib
+  - numpy
+  # bio CLIs used in preprocessing
+  - mafft
+  - samtools
+  - seqtk
+  - fastqc
+  # tiny utils merge steps/scripts may use
+  - gawk
+  - coreutils
+  - dos2unix
