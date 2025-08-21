@@ -35,17 +35,16 @@ This repository organizes a classical‑ML pipeline for CFR prediction using int
 
 ```mermaid
 flowchart LR
-  A[Fetch genomes / provide FASTA] --> B[Reference (NC_045512.2)]
-  B --> C[MAFFT alignment]
-  C --> D[Filter by % identity]
-  D --> E[Binary variant feature matrix]
-  E --> F[Lasso training + artifacts]
-  F --> G[Explain (SHAP/LIME)]
-  E --> H[Variant heatmap]
-  D --> I[Collapse features for new genomes]
+  A["Fetch genomes / provide FASTA"] --> B["Reference: NC_045512.2"]
+  B --> C["MAFFT alignment"]
+  C --> D["Filter by percent identity"]
+  D --> E["Binary variant feature matrix"]
+  E --> F["Lasso training + artifacts"]
+  F --> G["Explain (SHAP/LIME)"]
+  E --> H["Variant heatmap"]
+  D --> I["Collapse features for new genomes"]
   F --> I
-  I --> J[Predict CFR]
-```
+  I --> J["Predict CFR"]
 
 ---
 
