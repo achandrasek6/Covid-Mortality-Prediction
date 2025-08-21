@@ -363,4 +363,4 @@ For end‑to‑end runs, combine with `main.nf -profile docker` and mount MAFFT/
 
 ## License
 
-MIT.
+Apache‑2.0.
