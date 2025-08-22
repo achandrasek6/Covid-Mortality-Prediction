@@ -1,6 +1,7 @@
 .git
 work/
-results/
+cache/
+*results*
 out/
 logs/
 __pycache__/

@@ -10,7 +10,7 @@ params.scaler = null
 params.chunk_size = 10
 params.identity_thresh = 92.0
 params.outdir = null
-params.verbose = false  // New verbosity parameter
+params.verbose = false
 
 def python_cmd = "python3"
 
@@ -25,12 +25,8 @@ workflow {
 
     // Always show where outputs are being written
     println "[INFO] Writing outputs to: ${params.outdir}"
-
-    // Show additional startup info only if verbose
-    if (params.verbose) {
-        println "[INFO] Chunk size: ${params.chunk_size}"
-        println "[INFO] Identity threshold: ${params.identity_thresh}%"
-    }
+    println "[INFO] Chunk size: ${params.chunk_size}"
+    println "[INFO] Identity threshold: ${params.identity_thresh}%"
 
     // Stage static artifacts as channels
     reference_fasta_ch = Channel.fromPath(params.reference_fasta)
@@ -126,8 +122,6 @@ workflow {
 
 process preprocessChunk {
     tag { chunkName }
-    errorStrategy 'ignore'
-    conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
     tuple val(basename), val(chunkName), path(chunkFasta)
@@ -142,26 +136,96 @@ process preprocessChunk {
 
     script:
     """
-    # Use absolute paths to ensure the script can find the files
-    CHUNK_FASTA_ABS=\$(readlink -f ${chunkFasta})
-    REF_FASTA_ABS=\$(readlink -f ${reference_fasta})
-    SCRIPT_ABS=\$(readlink -f ${preprocess_script})
+    # Debug: Show current environment
+    echo "=== DEBUGGING FILE PATHS ==="
+    echo "Current directory: \$(pwd)"
+    echo "Available files:"
+    ls -la
+    echo "Python version: \$(python3 --version)"
 
-    ${python_cmd} \$SCRIPT_ABS \
-      --samples            \$CHUNK_FASTA_ABS \
-      --reference-fasta    \$REF_FASTA_ABS \
+    # Get absolute paths to ensure the Python script can find files
+    CHUNK_FASTA_ABS="\$(pwd)/${chunkFasta}"
+    REF_FASTA_ABS="\$(pwd)/${reference_fasta}"
+    SCRIPT_ABS="\$(pwd)/${preprocess_script}"
+
+    echo "Absolute paths:"
+    echo "  Chunk FASTA: \$CHUNK_FASTA_ABS"
+    echo "  Reference FASTA: \$REF_FASTA_ABS"
+    echo "  Script: \$SCRIPT_ABS"
+
+    # Verify files exist with absolute paths
+    ls -la "\$CHUNK_FASTA_ABS" || echo "ERROR: Chunk FASTA not found at absolute path"
+    ls -la "\$REF_FASTA_ABS" || echo "ERROR: Reference FASTA not found at absolute path"
+    ls -la "\$SCRIPT_ABS" || echo "ERROR: Script not found at absolute path"
+
+    echo "=== END DEBUGGING ==="
+
+    # Run preprocessing with absolute paths
+    echo "Starting preprocessing with absolute paths..."
+
+    python3 "\$SCRIPT_ABS" \
+      --samples            "\$CHUNK_FASTA_ABS" \
+      --reference-fasta    "\$REF_FASTA_ABS" \
       --identity-threshold ${params.identity_thresh} \
       --out-dir            ${chunkName}_pre
 
-    mv ${chunkName}_pre/variant_binary_matrix.csv   ${chunkName}_variant_binary_matrix.csv
-    mv ${chunkName}_pre/aligned_filtered.fasta      ${chunkName}_aligned_filtered.fasta
-    mv ${chunkName}_pre/identity_summary.tsv        ${chunkName}_summary.tsv
+    PYTHON_EXIT_CODE=\$?
+    echo "Python script exit code: \$PYTHON_EXIT_CODE"
+
+    if [ \$PYTHON_EXIT_CODE -ne 0 ]; then
+        echo "ERROR: Python script failed with exit code \$PYTHON_EXIT_CODE"
+        echo "Current directory contents after failure:"
+        ls -la
+        exit \$PYTHON_EXIT_CODE
+    fi
+
+    # Check if output directory was created
+    if [ ! -d "${chunkName}_pre" ]; then
+        echo "ERROR: Output directory ${chunkName}_pre was not created"
+        echo "Current directory contents:"
+        ls -la
+        exit 1
+    fi
+
+    echo "Output directory contents:"
+    ls -la ${chunkName}_pre/
+
+    # Move files with error checking
+    if [ -f "${chunkName}_pre/variant_binary_matrix.csv" ]; then
+        mv ${chunkName}_pre/variant_binary_matrix.csv ${chunkName}_variant_binary_matrix.csv
+        echo "Successfully moved variant_binary_matrix.csv"
+    else
+        echo "ERROR: variant_binary_matrix.csv not found in output directory"
+        ls -la ${chunkName}_pre/
+        exit 1
+    fi
+
+    if [ -f "${chunkName}_pre/aligned_filtered.fasta" ]; then
+        mv ${chunkName}_pre/aligned_filtered.fasta ${chunkName}_aligned_filtered.fasta
+        echo "Successfully moved aligned_filtered.fasta"
+    else
+        echo "ERROR: aligned_filtered.fasta not found in output directory"
+        ls -la ${chunkName}_pre/
+        exit 1
+    fi
+
+    if [ -f "${chunkName}_pre/identity_summary.tsv" ]; then
+        mv ${chunkName}_pre/identity_summary.tsv ${chunkName}_summary.tsv
+        echo "Successfully moved identity_summary.tsv"
+    else
+        echo "ERROR: identity_summary.tsv not found in output directory"
+        ls -la ${chunkName}_pre/
+        exit 1
+    fi
+
+    echo "=== FINAL OUTPUT CHECK ==="
+    ls -la *.csv *.fasta *.tsv
+    echo "=== PREPROCESSING COMPLETED SUCCESSFULLY ==="
     """
 }
 
 process predictChunk {
     tag { chunkName }
-    conda '/root/miniconda3/envs/covid-lasso-pipeline'
 
     input:
     tuple val(basename), path(variantMatrix), path(alignedFasta), val(chunkName)
@@ -175,7 +239,7 @@ process predictChunk {
 
     script:
     """
-    ${python_cmd} ${predict_script} \
+    python3 ${predict_script} \
       --variant-matrix       ${variantMatrix} \
       --aligned-fasta        ${alignedFasta} \
       --reference-id         NC_045512.2 \
@@ -210,17 +274,7 @@ process mergePredictions {
 
 process mergeFailures {
     tag { basename }
-    publishDir "${params.outdir}/${basename}", mode: 'copy', saveAs: { filename ->
-        // Check if file has actual failures (more than just header)
-        def file = new File("${task.workDir}/${filename}")
-        if (file.exists()) {
-            def lines = file.readLines()
-            if (lines.size() > 1) {
-                return filename  // Publish if there are failures
-            }
-        }
-        return null  // Don't publish if no failures
-    }
+    publishDir "${params.outdir}/${basename}", mode: 'copy'
 
     input:
     tuple val(basename), path(summaryFiles)
@@ -233,9 +287,31 @@ process mergeFailures {
     # Create failures file with header
     echo "sample" > failures.csv
 
+    # Debug: Show what summary files we have
+    echo "=== DEBUGGING FAILURES PROCESSING ==="
+    echo "Processing summary files for sample: ${basename}"
+    echo "Summary files:"
+    ls -la ${summaryFiles.join(' ')}
+
+    # Show content of each summary file
+    for file in ${summaryFiles.join(' ')}; do
+        echo "Content of \$file:"
+        cat "\$file" || echo "Could not read \$file"
+        echo "---"
+    done
+    echo "=== END DEBUGGING ==="
+
     # Extract failures from summary files
-    tr -d '\\r' < ${summaryFiles.join(' ')} \\
+    cat ${summaryFiles.join(' ')} \\
+      | tr -d '\\r' \\
       | awk -F'\\t' 'FNR>1 && \$3 ~ /REJECT/ { print \$1 }' \\
       >> failures.csv
+
+    # Debug: Show final failures file
+    echo "=== FINAL FAILURES FILE ==="
+    echo "Content of failures.csv:"
+    cat failures.csv
+    echo "Number of lines in failures.csv: \$(wc -l < failures.csv)"
+    echo "=== END FINAL FAILURES ==="
     """
 }

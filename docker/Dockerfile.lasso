@@ -1,34 +1,27 @@
 # docker/Dockerfile.lasso
+
 FROM mambaorg/micromamba:1.5.10 AS base
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 ENV MAMBA_ROOT_PREFIX=/opt/conda
 ENV PATH=/opt/conda/bin:$PATH
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 SHELL ["/bin/bash","-lc"]
+USER root
 
-# Conda env
+# Env + awscli
 COPY environment.yml /tmp/environment.yml
 RUN micromamba install -y -n base -f /tmp/environment.yml \
- && micromamba clean -a -y
+ && micromamba install -y -n base -c conda-forge awscli \
+ && micromamba clean -a -y \
+ && ln -sf /opt/conda/bin/python  /usr/local/bin/python3 \
+ && ln -sf /opt/conda/bin/mafft   /usr/local/bin/mafft \
+ && ln -sf /opt/conda/bin/aws     /usr/local/bin/aws
 
 # ---- Production image (for AWS Batch) ----
 FROM base AS prod
-# Copy project (adjust context path as needed)
+# Copy your updated sources, including scripts/preprocess_all.py
 COPY --chown=$MAMBA_USER:$MAMBA_USER . /app
 USER $MAMBA_USER
-ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
+
+# IMPORTANT: no ENTRYPOINT that cd's or swallows Nextflow's wrapper
 CMD ["bash"]
-
-# ---- Dev image (extra tools for local use) ----
-FROM base AS dev
-USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      vim less git curl procps tzdata ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-COPY --chown=$MAMBA_USER:$MAMBA_USER . /app
-USER $MAMBA_USER
-ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
-CMD ["bash"]
-
-
