@@ -11,6 +11,134 @@ A production-ready, reproducible pipeline for predicting COVID-19 variant-specif
 
 ---
 
+# Results at a Glance
+
+**What I built.** A production-ready pipeline that predicts **variant-specific COVID-19 CFR from viral genomes**, orchestrated with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**. A fine‑tuned **DNABERT** model (transformer on 6‑mer tokens) is trained as a higher‑capacity head; Nextflow integration is planned as an optional GPU stage.
+
+**Accuracy (held-out test, Lasso).** **R² = 0.831**, **RMSE ≈ 0.00194**, **MAE ≈ 0.00050**, **Spearman = 0.804**.
+
+**Why it matters.**
+
+* **Actionable surveillance:** turns raw genomes into **risk scores** for variants—useful for triage, early warning, and prioritizing wet-lab follow-ups.
+* **Interpretable by design:** sparse Lasso highlights a compact set of mutation features, so results are explainable to scientists and decision-makers.
+* **Built to scale/reproduce:** Nextflow + Docker + AWS mean the same pipeline runs locally and in the cloud with pinned dependencies and clean provenance.
+
+<!-- Variant-wise feature presence: include in intro -->
+<div align="center">
+
+  <em>Per-variant presence fraction for selected mutation features (Lasso baseline)</em><br/>
+
+  <img
+    src="figures/variant_feature_heatmap.png"
+    alt="Heatmap showing fraction of samples within each variant carrying each mutation feature (Lasso baseline)"
+    width="95%" />
+
+  <p style="max-width:900px; margin: 0.5rem auto 0; font-size: 0.95em;">
+    Each column is a mutation-derived feature (tick mark approx. every 50th feature); each row is a lineage (Alpha, Beta, Gamma, Delta, Omicron, WildType).
+    Brighter cells indicate higher prevalence of that feature within the variant—visually highlighting
+    lineage-specific patterns the model exploits for CFR prediction.
+  </p>
+
+</div>
+
+---
+
+## Key Figures
+
+
+
+### Lasso Model 
+
+#### 1) Overall Performance (stability across resamples)
+
+The distribution of test R² across bootstrap resamples centers around the reported score indicating **stable generalization** rather than a single lucky split.
+
+![Bootstrap Test R² Distribution](figures/bootstrap_r2_histogram.png)
+
+
+
+#### 2) Robustness Checks (controls)
+
+Both controls show the model isn’t learning artifacts.
+
+| **Label permutations** | **Feature shuffles** |
+| --- | --- |
+| <img src="https://github.com/user-attachments/assets/b8fe9a63-c2c9-46c4-aacc-2ff920dbe9b5" alt="Label permutation R² distribution (Lasso baseline)" width="100%"/> | <img src="https://github.com/user-attachments/assets/b91799ee-f531-47d6-98ee-f9bf544c06c9" alt="Feature shuffle R² distribution (Lasso baseline)" width="100%"/> |
+| <sub>Shuffle **labels**: breaks the signal; R² histogram is centered **well below 0**, confirming the model isn’t fitting noise.</sub> | <sub>Shuffle **features** in training only: destroys feature structure; test R² **collapses**, showing real dependence on true features.</sub> |
+
+
+
+#### 3) What Genes Matter (group ablations)
+
+Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −0.033**), validating the coefficient ranking. Dropping **Spike (`^S_`)** features (**ΔR² ≈ −0.025**) and **ORF1ab** (**ΔR² ≈ −0.019**) also harms performance—evidence these genes carry real signal.
+
+<img width="1579" height="580" alt="ablations_delta_r2" src="https://github.com/user-attachments/assets/00d77aed-93b2-4e8e-89d3-7969d9b24ad6" />
+
+<h4>4) Model Explainability (SHAP/LIME, Lasso baseline)</h4>
+
+<table>
+  <tr>
+    <td width="50%">
+      <strong>A. SHAP beeswarm (Lasso baseline)</strong><br/>
+      <img src="https://github.com/user-attachments/assets/fcaed853-98de-4f72-afe0-d31a499e75b0"
+           alt="A: SHAP beeswarm/density — per-sample feature contributions (Lasso baseline)"
+           width="100%"/>
+      <div><em>Each dot is a sample’s SHAP value (units=CFR). Right = ↑CFR, left = ↓CFR. Color: red=present, blue=absent. Saturation: Dark=high density, light=low density</em></div>
+    </td>
+    <td width="50%">
+      <strong>B. Top-10 mean(|SHAP|) features (Lasso baseline)</strong><br/>
+      <img src="https://github.com/user-attachments/assets/fe8cfab1-7e8b-44f6-be10-52edefeda0bc"
+           alt="B: Top-10 features by mean(|SHAP|) (Lasso baseline)"
+           width="100%"/>
+      <div><em>Average absolute SHAP across the test set—taller bars = more influential features.</em></div>
+    </td>
+  </tr>
+</table>
+
+
+
+##### C) LIME case studies (per-sample explanations)
+
+| **A. High-error case studies** | **B. Per-sample waterfall (MZ314997.2)** |
+| --- | --- |
+| <img src="https://github.com/user-attachments/assets/9588f24e-1081-4d97-bc71-7ec5c7f55243" alt="A: LIME case studies — y_true vs y_pred (top-5 labeled)"/> | <img src="https://github.com/user-attachments/assets/65cba188-044e-41bc-a6e7-05443e8a3663" alt="B: MZ314997.2 — Waterfall (Top-5 features → Prediction)"/> |
+| **What you’re seeing:** Ten representative genomes against the identity line; the **top-5 absolute errors are labeled** to spotlight where the model deviates (useful for stress-testing explanations). | **What you’re seeing:** Baseline CFR adjusted by the **five largest local contributions** to reach the prediction; dashed line shows **true CFR**. **Right bars raise** the score; **left bars lower** it. |
+
+> **How LIME complements SHAP:**  
+> SHAP shows **global patterns** (which features matter overall and in which direction per sample), while **LIME** zooms into **one sample at a time** with a simple surrogate explaining its specific prediction (great for narrative, QA, and debugging outliers).
+
+**Quick takeaways (Lasso baseline):**
+- Spike and ORF1ab sites dominate top importance—consistent with group ablations.  
+- Beeswarm directionality highlights which alleles **raise vs. lower** predicted CFR, guiding biological follow-up.  
+- LIME helps **audit individual genomes** (especially large-error cases) to ensure the model’s rationale is sensible.
+
+### Language model (DNABERT) — quick summary
+
+* Fine-tuned transformer achieved **RMSE = 0.0046**, about **15% lower error** than Lasso in my study, while capturing **long-range sequence context**. **Recommended when maximum accuracy is needed.**
+* Useful when you want maximum accuracy and are OK with GPU/latency trade-offs; Lasso remains the fast, interpretable default.
+* Artifacts included: SavedModel/weights and tokenizer; NF GPU integration planned so you can toggle `--use_dnabert true`.
+
+| Model                | Strengths                                                | Trade-offs                             | Best for                                                              |
+| -------------------- | -------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------- |
+| **Lasso (baseline)** | Interpretable coefficients; small, fast; easy to explain | May miss non-linear/long-range effects | Routine surveillance, explainability, bulk scoring                    |
+| **DNABERT (deep)**   | Captures context; headroom for accuracy                  | GPU needed; slower; less transparent   | High-stakes analyses, research scenarios where extra accuracy matters |
+
+## TL;DR
+
+**Accurate (R² \~0.83), interpretable, and production-ready** genomic risk prediction.
+Deep-learning headroom (DNABERT trained) is available; the shipped Lasso baseline already gives strong accuracy with transparent mutation-level insights and real robustness evidence.
+
+<details>
+<summary><strong>Bonus: Model parsimony</strong></summary>
+
+An elbow curve shows lasso model performance saturating with a relatively small number of features—useful for **simpler, faster deployments** and easier biological review.
+
+![Elbow: #features vs Test R²](figures/elbow_plot.png)
+
+</details>
+
+---
+
 ## 📌 Features
 - **End-to-end workflow**: Fetch genomes → align (MAFFT) → build mutation features → train ML models → explain results.
 - **Classical ML**: L1-regularized Lasso regression for interpretable, sparse mutation features.
