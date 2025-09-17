@@ -97,7 +97,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 
 
 
-##### C) LIME case studies (per-sample explanations)
+#### C) LIME case studies (per-sample explanations)
 
 | **A. High-error case studies** | **B. Per-sample waterfall (MZ314997.2)** |
 | --- | --- |
