@@ -14,18 +14,18 @@ Features:
 
 Example:
   python3 scripts/neg_ctrls_ablations.py \
-    --train_csv lasso_training_data/feature_matrix_train.csv \
-    --test_csv  lasso_training_data/feature_matrix_test.csv  \
-    --target_col cfr \
-    --id_col sample_id \
-    --outdir controls_out \
-    --use_lassocv --cv_folds 5 \
-    --n_label_perm 200 \
-    --n_feat_shuffle 100 \
-    --ablate_regex "^S_" "^ORF1ab_" \
-    --ablate_list key_sites.txt \
-    --ablate_topk_coef 50 \
-    --save_preds
+  --train_csv lasso_training_data/feature_matrix_train.csv \
+  --test_csv  lasso_training_data/feature_matrix_test.csv  \
+  --target_col cfr \
+  --id_col sample_id \
+  --outdir controls_out \
+  --alpha 0.000174 \
+  --n_label_perm 50 \
+  --n_feat_shuffle 20 \
+  --ablate_regex "^S_" "^ORF1ab_" \
+  --ablate_list key_sites.txt \
+  --ablate_topk_coef 50 \
+  --save_preds
 """
 from __future__ import annotations
 
