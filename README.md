@@ -354,8 +354,8 @@ See `nextflow.config` for available profiles (e.g., `local`, `docker`) and tunab
 ## Docker image
 Build a runtime with all dependencies for the Lasso pipeline.
 ```bash
-docker build -f Dockerfile.lasso -t cfr-lasso:latest .
-docker run --rm -v "$PWD":/work -w /work cfr-lasso:latest \
+docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
+docker run --rm -v "$PWD":/work -w /work covid-lasso:aws-preprocess-fix-20250822-0339 \
   python scripts/ML_model.py --help
 ```
 For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data volumes as needed.
