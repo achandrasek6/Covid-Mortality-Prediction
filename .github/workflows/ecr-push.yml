@@ -1,0 +1,49 @@
+name: Build & Push covid-lasso to ECR
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docker/Dockerfile.lasso'
+      - '.dockerignore'
+      - '.github/workflows/ecr-push.yml'
+      - 'scripts/**'
+      - 'requirements.txt'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPO:   ${{ vars.ECR_REPO }}   # covid-lasso
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push docker/Dockerfile.lasso
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.lasso
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:latest
+          cache-from: type=registry,ref=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:buildcache
+          cache-to: type=registry,ref=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:buildcache,mode=max
