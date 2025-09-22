@@ -164,7 +164,7 @@ project/
 ├─ collapsed_prediction/           # Predictions for new genomes
 ├─ figures/                        # Visualizations + diagrams (add productionization.png here)
 ├─ scripts/                        # Python utilities & CLI tools
-├─ Docker/                         # Docker containers for pipeline
+├─ docker/                         # Docker containers for pipeline
 ├─ environment.yml                 # Conda environment
 ├─ requirements.txt                # pip requirements
 ├─ main.nf                         # Nextflow pipeline
