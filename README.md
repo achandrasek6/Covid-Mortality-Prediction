@@ -102,7 +102,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 | **A. High-error case studies** | **B. Per-sample waterfall (MZ314997.2)** |
 | --- | --- |
 | <img src="https://github.com/user-attachments/assets/9588f24e-1081-4d97-bc71-7ec5c7f55243" alt="A: LIME case studies — y_true vs y_pred (top-5 labeled)"/> | <img src="https://github.com/user-attachments/assets/65cba188-044e-41bc-a6e7-05443e8a3663" alt="B: MZ314997.2 — Waterfall (Top-5 features → Prediction)"/> |
-| **What you’re seeing:** Ten representative genomes against the identity line; the **top-5 absolute errors are labeled** to spotlight where the model deviates (useful for stress-testing explanations). | **What you’re seeing:** Baseline CFR adjusted by the **five largest local contributions** to reach the prediction; dashed line shows **true CFR**. **Right bars raise** the score; **left bars lower** it. |
+| **What you’re seeing:** Ten high-error genomes against the identity line; the **top-5 absolute errors are labeled** to spotlight where the model deviates (useful for stress-testing explanations). | **What you’re seeing:** Baseline CFR adjusted by the **five largest local contributions** to reach the prediction; dashed line shows **true CFR**. **Right bars raise** the score; **left bars lower** it. |
 
 > **How LIME complements SHAP:**  
 > SHAP shows **global patterns** (which features matter overall and in which direction per sample), while **LIME** zooms into **one sample at a time** with a simple surrogate explaining its specific prediction (great for narrative, QA, and debugging outliers).
@@ -164,7 +164,7 @@ project/
 ├─ collapsed_prediction/           # Predictions for new genomes
 ├─ figures/                        # Visualizations + diagrams (add productionization.png here)
 ├─ scripts/                        # Python utilities & CLI tools
-├─ Dockerfile.lasso                # Container for pipeline
+├─ docker/                         # Docker containers for pipeline
 ├─ environment.yml                 # Conda environment
 ├─ requirements.txt                # pip requirements
 ├─ main.nf                         # Nextflow pipeline
@@ -354,8 +354,8 @@ See `nextflow.config` for available profiles (e.g., `local`, `docker`) and tunab
 ## Docker image
 Build a runtime with all dependencies for the Lasso pipeline.
 ```bash
-docker build -f Dockerfile.lasso -t cfr-lasso:latest .
-docker run --rm -v "$PWD":/work -w /work cfr-lasso:latest \
+docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
+docker run --rm -v "$PWD":/work -w /work covid-lasso:aws-preprocess-fix-20250822-0339 \
   python scripts/ML_model.py --help
 ```
 For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data volumes as needed.
