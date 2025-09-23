@@ -12,7 +12,7 @@ A production-ready, reproducible pipeline for predicting COVID-19 variant-specif
 
 ---
 
-# 📊 Results at a Glance
+# 🔬 Results at a Glance
 
 **What I built.** A production-ready pipeline that predicts **variant-specific COVID-19 CFR from viral genomes**, orchestrated with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**. A fine‑tuned **DNABERT** model (transformer on 6‑mer tokens) is trained as a higher‑capacity head; Nextflow integration is planned as an optional GPU stage.
 
@@ -255,7 +255,7 @@ docker pull 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso:<commit_sha
 
 Use these quick links to jump around this README:
 
-- [📊 Results at a Glance](#-results-at-a-glance)
+- [🔬 Results at a Glance](#-results-at-a-glance)
 - [📈 Key Figures](#-key-figures)
 - [📌 Features](#-features)
 - [🗂️ Repository Layout](#️-repository-layout)
