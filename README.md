@@ -4,6 +4,7 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Nextflow](https://img.shields.io/badge/Nextflow-DSL2-orange)
 ![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20Fargate-lightgrey)
+[![Build & Push](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml)
 
 A production-ready, reproducible pipeline for predicting COVID-19 variant-specific case fatality rates. Built with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**.
 
@@ -11,7 +12,7 @@ A production-ready, reproducible pipeline for predicting COVID-19 variant-specif
 
 ---
 
-# Results at a Glance
+# 📊 Results at a Glance
 
 **What I built.** A production-ready pipeline that predicts **variant-specific COVID-19 CFR from viral genomes**, orchestrated with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**. A fine‑tuned **DNABERT** model (transformer on 6‑mer tokens) is trained as a higher‑capacity head; Nextflow integration is planned as an optional GPU stage.
 
@@ -43,7 +44,7 @@ A production-ready, reproducible pipeline for predicting COVID-19 variant-specif
 
 ---
 
-## Key Figures
+## 📈 Key Figures
 
 
 
@@ -138,7 +139,6 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 </details>
 
 ---
-
 ## 📌 Features
 - **End-to-end workflow**: Fetch genomes → align (MAFFT) → build mutation features → train ML models → explain results.
 - **Classical ML**: L1-regularized Lasso regression for interpretable, sparse mutation features.
@@ -152,23 +152,29 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 ---
 
 ## 🗂️ Repository Layout
+
 ```
 project/
-├─ raw_data/                       # Reference genomes & annotations
-├─ transformed_data/               # Input FASTAs
-├─ preprocessed_full/              # Alignments, filters, variant matrices
-├─ lasso_training_data/            # Train/test feature matrices
-├─ dnabert_cfr_regressor.../       # Saved models + scalers + DNABERT weights + tokenizers
-├─ models/                         # Lasso model + scaler
-├─ explanations/                   # SHAP/LIME + robustness outputs
-├─ collapsed_prediction/           # Predictions for new genomes
-├─ figures/                        # Visualizations + diagrams (add productionization.png here)
-├─ scripts/                        # Python utilities & CLI tools
-├─ docker/                         # Docker containers for pipeline
-├─ environment.yml                 # Conda environment
-├─ requirements.txt                # pip requirements
-├─ main.nf                         # Nextflow pipeline
-└─ nextflow.config                 # Profiles & executor configs
+├─ .github/                          # GitHub config (Actions workflows, etc.)
+├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
+├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
+├─ docker/                           # Container build context (Dockerfile.lasso lives here)
+├─ explanations/                     # SHAP/LIME figures, explanation reports
+├─ figures/                          # Visualizations & diagrams used in the README/papers
+├─ lasso_training_data/              # Train/test feature matrices for Lasso
+├─ model_artifacts/                  # Trained models, scalers, checkpoints
+├─ raw_data/                         # Reference genomes & annotations
+├─ scripts/                          # Python utilities & CLI entrypoints
+├─ test_samples/                     # Small FASTA samples for quick runs
+├─ transformed_data/                 # Prepared/subsampled input FASTAs
+├─ .dockerignore                     # Build context excludes for Docker
+├─ .gitignore                        # Git ignore rules
+├─ CITATION.cff                      # Citation metadata for the project
+├─ README.md                         # This documentation
+├─ environment.yml                   # Conda environment spec
+├─ requirements.txt                  # pip requirements
+├─ main.nf                           # Nextflow pipeline entrypoint
+└─ nextflow.config                   # Nextflow profiles & executor configs
 ```
 
 > Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
@@ -222,7 +228,8 @@ flowchart LR
 ---
 
 ## ⚙️ Productionization
-- **CI/CD**: GitHub Actions → build Docker image → push to ECR.
+
+- **CI/CD (shipped)**: GitHub Actions builds `docker/Dockerfile.lasso` and pushes to ECR (`latest` + `<commit_sha>`).
 - **Batch scoring**: Run large cohorts on AWS Batch.
 - **On-demand inference**: FastAPI microservice on ECS Fargate, exposed via API Gateway (planned).
 - **Data exchange**: Pre-signed S3 URLs for secure input/output (planned).
@@ -230,21 +237,50 @@ flowchart LR
 - **Observability**: **Amazon CloudWatch** Logs & Metrics with Alarms (job failures, p95 latency, SQS queue depth).
 - **Monitoring**: Drift reports for variant distribution shifts (planned).
 
+### CI/CD: GitHub Actions → Docker → AWS ECR (Shipped)
 
+This repo auto-builds a Docker image and pushes it to **Amazon ECR** on every push to `main`.
 
+- **Workflow:** `.github/workflows/ecr-push.yml`
+- **Dockerfile:** `docker/Dockerfile.lasso`
+- **Registry:** `802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso`
+- **Tags pushed:** `:latest` (convenience) and `:<commit_sha>` (immutable)
+- **Build cache:** an extra `:buildcache` (or `:cache`) tag is used by Buildx for faster builds.
+
+Pull the image:
+```bash
+aws ecr get-login-password --region us-east-2 \
+ | docker login --username AWS --password-stdin 802861900950.dkr.ecr.us-east-2.amazonaws.com
+
+docker pull 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso:latest
+# or pin an immutable build:
+docker pull 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso:<commit_sha>
+```
 ---
 
 ## 📖 Documentation
-These are **sections within this README** (not separate files). Use the links to jump to each section:
 
-- [CLI by Stage](#cli-by-stage) — step-by-step scripts  
-- [Nextflow entrypoint](#nextflow-entrypoint) — orchestration configs  
-- [Docker image](#docker-image) — reproducible container  
-- [Troubleshooting](#troubleshooting) — common issues  
+Use these quick links to jump around this README:
+
+- [📊 Results at a Glance](#-results-at-a-glance)
+- [📈 Key Figures](#-key-figures)
+- [📌 Features](#-features)
+- [🗂️ Repository Layout](#️-repository-layout)
+- [🚀 Quickstart](#-quickstart)
+- [🧬 Workflow Overview](#-workflow-overview)
+- [⚙️ Productionization](#️-productionization)
+- [💻 CLI by Stage](#-cli-by-stage)
+- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
+- [🐳 Docker Image](#-docker-image)
+- [📊 Outputs](#-outputs)
+- [📌 Roadmap](#-roadmap)
+- [🧰 Troubleshooting](#-troubleshooting)
+- [📜 License](#-license)
+
 
 ---
 
-## CLI by Stage
+## 💻 CLI by Stage
 
 ### 0) Get the reference & annotations
 Creates `raw_data/NC_045512.2_sequence.fasta` and a gene table.
@@ -331,7 +367,7 @@ Fine-tuned DNABERT regressor has been trained separately; Nextflow module will b
 
 ---
 
-## Nextflow entrypoint
+## 🧭 Nextflow Entrypoint
 A Nextflow wrapper (`main.nf`) orchestrates the stages above for scalable, parallel execution.
 
 **Typical usage**
@@ -345,13 +381,18 @@ nextflow run main.nf -profile local \
 nextflow run main.nf -profile docker \
   --samples "transformed_data/variant_samples_small.fasta" \
   --outdir results_nf
+
+# AWS Batch execution (cloud computing)
+nextflow run main.nf -profile aws \
+--samples "s3://ach-covid-lasso-us-east-2/inputs/test_samples/*.fasta" \
+--outdir "s3://ach-covid-lasso-us-east-2/results_test" \
 ```
 
-See `nextflow.config` for available profiles (e.g., `local`, `docker`) and tunables like CPUs/memory, container images, and work directory. Override at runtime with `-with-report`, `-with-trace`, `-with-dag flowchart.png`, and resume with `-resume`.
+See `nextflow.config` for available profiles (e.g., `local`, `docker`), full list of CLI args and tunables like CPUs/memory, container images, and work directory. Override at runtime with `-with-report`, `-with-trace`, `-with-dag flowchart.png`, and resume with `-resume`.
 
 ---
 
-## Docker image
+## 🐳 Docker Image
 Build a runtime with all dependencies for the Lasso pipeline.
 ```bash
 docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
@@ -379,7 +420,7 @@ For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data
 
 ## 📌 Roadmap
 
-### ✅ Shipped — v1.0 (Aug 2025)
+### ✅ Shipped — v1.1 (Aug 2025)
 - Nextflow DSL2 orchestration
 - Dockerized stages with pinned dependencies
 - **AWS Batch** integration for distributed, chunked scoring
@@ -388,9 +429,9 @@ For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data
 - Explainability (SHAP, LIME)
 - Visualizations & reports (heatmaps, regularization curves)
 - Reproducibility artifacts (models, scalers, run reports)
+- CI/CD (GitHub Actions → build/test mini NF run → push to ECR)
 
 ### 🚧 In Flight — v1.1
-- CI/CD (GitHub Actions → build/test mini NF run → push to ECR)
 - MLflow experiment tracking + model registry (design complete)
 - **Integrate trained DNABERT module into Nextflow pipeline** (optional GPU Batch queue)
 
@@ -403,7 +444,7 @@ For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data
 
 ---
 
-## Troubleshooting
+## 🧰 Troubleshooting
 - **CloudWatch Logs Insights**: grep structured JSON logs to find failing chunks quickly. Useful starter query:
 ```sql
 fields @timestamp, @message
