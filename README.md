@@ -420,7 +420,7 @@ For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data
 
 ## 📌 Roadmap
 
-### ✅ Shipped — v1.1 (Aug 2025)
+### ✅ Shipped — v1.1 (Aug/Sep 2025)
 - Nextflow DSL2 orchestration
 - Dockerized stages with pinned dependencies
 - **AWS Batch** integration for distributed, chunked scoring
