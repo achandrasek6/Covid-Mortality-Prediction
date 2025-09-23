@@ -270,8 +270,8 @@ Use these quick links to jump around this README:
 - [🧬 Workflow Overview](#-workflow-overview)
 - [⚙️ Productionization](#️-productionization)
 - [💻 CLI by Stage](#-cli-by-stage)
-- [🧭 Nextflow entrypoint](#-nextflow-entrypoint)
-- [🐳 Docker image](#-docker-image)
+- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
+- [🐳 Docker Image](#-docker-image)
 - [📊 Outputs](#-outputs)
 - [📌 Roadmap](#-roadmap)
 - [🧰 Troubleshooting](#-troubleshooting)
@@ -367,7 +367,7 @@ Fine-tuned DNABERT regressor has been trained separately; Nextflow module will b
 
 ---
 
-## 🧭 Nextflow entrypoint
+## 🧭 Nextflow Entrypoint
 A Nextflow wrapper (`main.nf`) orchestrates the stages above for scalable, parallel execution.
 
 **Typical usage**
@@ -392,7 +392,7 @@ See `nextflow.config` for available profiles (e.g., `local`, `docker`), full lis
 
 ---
 
-## 🐳 Docker image
+## 🐳 Docker Image
 Build a runtime with all dependencies for the Lasso pipeline.
 ```bash
 docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
