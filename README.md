@@ -24,23 +24,16 @@ A production-ready, reproducible pipeline for predicting COVID-19 variant-specif
 * **Interpretable by design:** sparse Lasso highlights a compact set of mutation features, so results are explainable to scientists and decision-makers.
 * **Built to scale/reproduce:** Nextflow + Docker + AWS mean the same pipeline runs locally and in the cloud with pinned dependencies and clean provenance.
 
-<!-- Variant-wise feature presence: include in intro -->
-<div align="center">
+**From metrics to mechanism:** where the signal lives in the genome:
 
-  <em>Per-variant presence fraction for selected mutation features (Lasso baseline)</em><br/>
+<img src="figures/variant_feature_heatmap.png"
+     alt="Per-variant fraction of samples with each mutation-derived feature. Columns are grouped by genomic region (ORF1ab, Spike, Other) with a colored header strip; rows are variants (Alpha–Omicron). WildType excluded."
+     width="95%" />
 
-  <img
-    src="figures/variant_feature_heatmap.png"
-    alt="Heatmap showing fraction of samples within each variant carrying each mutation feature (Lasso baseline)"
-    width="95%" />
+<p style="max-width:900px; margin: 0.75rem auto 0; font-size: 0.95em; line-height:1.45;">
+This heatmap shows the fraction of genomes within each lineage carrying each mutation-derived feature. Columns are grouped and ordered by genomic position—left→right: <strong>ORF1ab (replicase)</strong>, <strong>Spike (S)</strong>, then <strong>Other</strong> (N/M/E + accessory); within each region, features also follow genomic order. The visually higher mutation density in Spike likely reflects (i) <em>positive selection</em> for host-entry and immune-escape changes (RBD, NTD “antigenic supersite,” S1/S2 cleavage), (ii) <em>surveillance bias</em>—Spike-focused reporting and curation make S changes more consistently captured, and (iii) <em>tolerance</em>—replication enzymes in ORF1ab are more constrained, so fewer substitutions persist there. Note that “prevalence” here indicates how common a feature is within a variant, not its effect size; downstream ablations/SHAP quantify influence. <em>WildType excluded.</em>
+</p>
 
-  <p style="max-width:900px; margin: 0.5rem auto 0; font-size: 0.95em;">
-    Each column is a mutation-derived feature (tick mark approx. every 50th feature); each row is a lineage (Alpha, Beta, Gamma, Delta, Omicron, WildType).
-    Brighter cells indicate higher prevalence of that feature within the variant—visually highlighting
-    lineage-specific patterns the model exploits for CFR prediction.
-  </p>
-
-</div>
 
 ---
 
