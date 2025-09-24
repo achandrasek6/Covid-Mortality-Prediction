@@ -1,0 +1,45 @@
+name: Build & Push fastapi to ECR
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "app/**"
+      - "Dockerfile.api"
+      - ".github/workflows/ecr-push-fastapi.yml"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: us-east-2
+      AWS_ACCOUNT_ID: "802861900950"
+      ECR_REGISTRY: 802861900950.dkr.ecr.us-east-2.amazonaws.com
+      ECR_REPO: covid-cfr-api
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS creds (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::802861900950:role/github-actions-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: |
+          docker build -f Dockerfile.api -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG .
+
+      - name: Tag & push
+        run: |
+          docker tag $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPO:latest
+          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPO:latest
+
