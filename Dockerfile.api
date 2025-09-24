@@ -1,3 +1,5 @@
+# Docker Hub official images mirrored on AWS Public ECR
+FROM public.ecr.aws/docker/library/python:3.11-slim
 FROM python:3.11-slim
 
 # Set a non-root user
