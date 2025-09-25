@@ -5,6 +5,7 @@
 ![Nextflow](https://img.shields.io/badge/Nextflow-DSL2-orange)
 ![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20Fargate-lightgrey)
 [![Build & Push](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml)
+[![Build & Push (API)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
 
 A production-ready, reproducible pipeline for predicting COVID-19 variant-specific case fatality rates. Built with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**.
 
@@ -149,9 +150,10 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 ```
 project/
 ├─ .github/                          # GitHub config (Actions workflows, etc.)
+├─ app/                              # FastAPI service (main.py, requirements.txt)
 ├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
 ├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
-├─ docker/                           # Container build context (Dockerfile.lasso lives here)
+├─ docker/                           # NF container build context (Dockerfile.lasso lives here)
 ├─ explanations/                     # SHAP/LIME figures, explanation reports
 ├─ figures/                          # Visualizations & diagrams used in the README/papers
 ├─ lasso_training_data/              # Train/test feature matrices for Lasso
@@ -162,6 +164,7 @@ project/
 ├─ transformed_data/                 # Prepared/subsampled input FASTAs
 ├─ .dockerignore                     # Build context excludes for Docker
 ├─ .gitignore                        # Git ignore rules
+├─ dockerfile.api                    # API Container build context
 ├─ CITATION.cff                      # Citation metadata for the project
 ├─ README.md                         # This documentation
 ├─ environment.yml                   # Conda environment spec
@@ -200,6 +203,64 @@ python scripts/ML_model.py \
   --out-dir model_artifacts
 ```
 
+## 🧩 API quickstart (Fargate)
+
+> **Note on URLs (security)**
+> This repo doesn’t publish a live endpoint. The ALB DNS you create in AWS is a **public, unauthenticated entry point**. Posting it in a README invites scraping/abuse, noisy logs, and surprise costs.  
+> Use a placeholder like `https://<YOUR_API_URL>` here, and deploy behind one of these:
+> - **API Gateway → VPC Link → private ALB** (recommended): add API keys/JWT, throttling, custom domain + TLS.
+> - **Public ALB** (testing only): restrict Security Group to your IPs, enable TLS (ACM), require `X-API-Key`, attach WAF.
+>
+> When testing locally, substitute your own URL **without** committing it:
+> ```bash
+> export API_BASE="https://<YOUR_API_URL>"
+> curl -H "X-API-Key: $API_KEY" "$API_BASE/health"
+> ```
+
+Replace `<ALB_DNS>` and `<YOUR_API_URL>` with your own when available.
+
+**Predict from inline features**
+```bash
+curl -X POST http://<ALB_DNS>/predict \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sample_id":"EX123",
+    "features":{"S_1434":1,"ORF1ab_2428":1,"S_645":0}
+  }'
+```
+
+**Presign an S3 PUT (upload)**
+```
+curl -X POST http://<ALB_DNS>/presign \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"uploads/example.fasta","method":"put_object","expires_in":3600}'
+```
+**Queue a batch job**
+```
+curl -X POST http://<ALB_DNS>/submit \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input_s3":"s3://ach-covid-lasso-us-east-2/inputs/batch/*.fasta",
+    "output_s3":"s3://ach-covid-lasso-us-east-2/results/batch-001/",
+    "params":{"profile":"aws"}
+  }'
+```
+### 🔧 Environment (ECS task)
+
+# Required
+```
+AWS_REGION=us-east-2
+S3_BUCKET=<your-s3-bucket>                  # e.g., covid-cfr-prod-us-east-2
+SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account-id>/<queue-name>
+```
+
+# Optional
+```
+REQUIRE_API_KEY=true                        # set true to enforce API key auth
+API_KEY=<strong-secret-value>               # store in Secrets Manager/Task secrets
+MODEL_VERSION=v1
+```
+
 ---
 
 ## 🧬 Workflow Overview
@@ -222,7 +283,7 @@ flowchart LR
 
 ## ⚙️ Productionization
 
-- **CI/CD (shipped)**: GitHub Actions builds `docker/Dockerfile.lasso` and pushes to ECR (`latest` + `<commit_sha>`).
+- **CI/CD**: GitHub Actions builds `docker/Dockerfile.lasso` and pushes to ECR (`latest` + `<commit_sha>`).
 - **Batch scoring**: Run large cohorts on AWS Batch.
 - **On-demand inference**: FastAPI microservice on ECS Fargate, exposed via API Gateway (planned).
 - **Data exchange**: Pre-signed S3 URLs for secure input/output (planned).
@@ -242,13 +303,23 @@ This repo auto-builds a Docker image and pushes it to **Amazon ECR** on every pu
 
 Pull the image:
 ```bash
-aws ecr get-login-password --region us-east-2 \
- | docker login --username AWS --password-stdin 802861900950.dkr.ecr.us-east-2.amazonaws.com
-
-docker pull 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso:latest
-# or pin an immutable build:
-docker pull 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso:<commit_sha>
+Registry: <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>
+...
+docker pull <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>:latest
+docker pull <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>:<commit_sha>
 ```
+
+### 🛰️ Deployed API (ECS Fargate + ALB) (Shipped)
+Public ALB → FastAPI service on ECS Fargate. Health:
+_Currently private_
+```bash
+curl -H "X-API-Key: $API_KEY" "$API_BASE/health"
+# {"status":"ok","time":...}
+```
+
+### 🔒 Security 
+Endpoints can require an API key (`REQUIRE_API_KEY=true`). S3 access uses presigned URLs scoped to allowed prefixes; SQS messages are JSON-validated server side. CI uses AWS OIDC (no long-lived keys).
+
 ---
 
 ## 📖 Documentation
@@ -377,8 +448,8 @@ nextflow run main.nf -profile docker \
 
 # AWS Batch execution (cloud computing)
 nextflow run main.nf -profile aws \
---samples "s3://ach-covid-lasso-us-east-2/inputs/test_samples/*.fasta" \
---outdir "s3://ach-covid-lasso-us-east-2/results_test" \
+--samples "s3://<your-bucket>/inputs/test_samples/*.fasta"
+--outdir "s3://<your-bucket>/results_test"
 ```
 
 See `nextflow.config` for available profiles (e.g., `local`, `docker`), full list of CLI args and tunables like CPUs/memory, container images, and work directory. Override at runtime with `-with-report`, `-with-trace`, `-with-dag flowchart.png`, and resume with `-resume`.
