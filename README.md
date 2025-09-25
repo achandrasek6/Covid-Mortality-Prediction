@@ -164,7 +164,7 @@ project/
 ├─ transformed_data/                 # Prepared/subsampled input FASTAs
 ├─ .dockerignore                     # Build context excludes for Docker
 ├─ .gitignore                        # Git ignore rules
-├─ dockerfile.api                    # API Container build context
+├─ Dockerfile.api                    # API Container build context
 ├─ CITATION.cff                      # Citation metadata for the project
 ├─ README.md                         # This documentation
 ├─ environment.yml                   # Conda environment spec
