@@ -1,4 +1,4 @@
-# SARS-CoV-2 Case Fatality Rate (CFR) Prediction Pipeline
+# SARS-CoV-2 Case-Fatality Rate (CFR) Prediction Pipeline
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
