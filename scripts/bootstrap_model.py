@@ -6,9 +6,12 @@ Script: bootstrap_model.py
 Description:
     Performs bootstrap resampling to assess the stability of a Lasso model predicting
     global case fatality rate (CFR) from genomic features and writes **only** a smooth
-    KDE "bell-curve" of the bootstrap test-set R² distribution to
-    `figures/bootstrap_r2_histogram.png`. The plot shades the central 95% interval
-    in green, the tails in red, and shows a vertical dotted line at the model R² = 0.8306.
+    KDE density plot of the bootstrap test-set R² distribution to
+    `figures/bootstrap_r2_histogram.png`.
+
+    Visuals:
+      • Central 95% CI shaded green, tails red
+      • Vertical dotted line at R² = 0.8306 with a non-overlapping label
 
 Usage:
     python3 bootstrap_model.py
@@ -26,7 +29,6 @@ from sklearn.metrics import r2_score
 from sklearn.neighbors import KernelDensity
 from joblib import Parallel, delayed
 import multiprocessing
-import sys
 
 # ---------------------------
 # Configuration (hardcoded)
@@ -63,7 +65,7 @@ def load_and_scale(train_path, test_path):
     X_test  = df_test[feat_cols].values
     y_test  = df_test["Global CFR"].values
 
-    # with_mean=False to be CSR/COO-friendly if sparse; safe for dense too.
+    # with_mean=False to be sparse-friendly if needed
     scaler = StandardScaler(with_mean=False)
     X_train_s = scaler.fit_transform(X_train)
     X_test_s  = scaler.transform(X_test)
@@ -87,62 +89,65 @@ def _bootstrap_iteration(i, X_train_s, y_train, X_test_s, y_test, alpha, seed):
 def plot_density_with_ci(r2_values, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     arr = np.asarray(r2_values, dtype=float)
-    out_path = os.path.join(out_dir, "bootstrap_r2_histogram.png")  # keep same name to replace
+    out_path = os.path.join(out_dir, "bootstrap_r2_histogram.png")  # keep same filename
 
-    # KDE grid
+    # KDE grid bounds with small padding
     x_min, x_max = np.min(arr), np.max(arr)
-    pad = 0.05 * (x_max - x_min if x_max > x_min else 1.0)
-    x_grid = np.linspace(x_min - pad, x_max + pad, 1000)[:, None]
+    rng_span = (x_max - x_min) if x_max > x_min else 1.0
+    pad = 0.05 * rng_span
+    x = np.linspace(x_min - pad, x_max + pad, 1000)
+    x_grid = x[:, None]
 
-    # Bandwidth via Silverman's rule-of-thumb (robust-ish)
+    # Bandwidth (Silverman's rule)
     std = np.std(arr, ddof=1) if len(arr) > 1 else 0.1
     n = len(arr)
     bw = 1.06 * std * (n ** (-1/5)) if n > 1 and std > 0 else 0.1
 
     kde = KernelDensity(kernel="gaussian", bandwidth=bw)
     kde.fit(arr[:, None])
-    log_dens = kde.score_samples(x_grid)
-    y = np.exp(log_dens)  # density
+    y = np.exp(kde.score_samples(x_grid))
 
-    # Empirical 95% interval from percentiles
+    # Empirical 95% interval (for shading only)
     lo, hi = np.percentile(arr, [2.5, 97.5])
 
-    # Build masks for shading
-    x = x_grid.ravel()
+    # Masks for shading
     inside = (x >= lo) & (x <= hi)
     left_tail = x < lo
     right_tail = x > hi
 
     plt.figure(figsize=(9, 4.8))
 
-    # Plot the smooth density curve
+    # Smooth density curve
     plt.plot(x, y, linewidth=2)
 
     # Shade tails (red) and central 95% (green)
-    # Left tail
     if np.any(left_tail):
         plt.fill_between(x[left_tail], y[left_tail], 0, alpha=0.25, color="red")
-    # Central 95%
     if np.any(inside):
         plt.fill_between(x[inside], y[inside], 0, alpha=0.25, color="green")
-    # Right tail
     if np.any(right_tail):
         plt.fill_between(x[right_tail], y[right_tail], 0, alpha=0.25, color="red")
 
-    # Draw vertical dotted line at the model R² with label
+    # Vertical dotted line at model R²
     plt.axvline(MODEL_R2, linestyle=":", linewidth=2)
-    # Place a small label near the top of the curve at that x
-    # Find y-value at MODEL_R2 (nearest point)
+
+    # Non-overlapping label near the line
     idx_near = np.argmin(np.abs(x - MODEL_R2))
     y_near = y[idx_near]
-    plt.text(MODEL_R2, y_near, f"  Model R² = {MODEL_R2:.4f}", rotation=90, va="bottom", ha="left")
+    x_offset = 0.015 * rng_span
+    plt.text(
+        MODEL_R2 + x_offset,
+        y_near,
+        f"Model R² = {MODEL_R2:.4f}",
+        va="bottom", ha="left",
+        bbox=dict(boxstyle="round,pad=0.2", alpha=0.3)
+    )
 
-    # Axes/labels
+    # Labels / title — explicitly note the 95% CI without numbers
     plt.xlabel("Test R²")
     plt.ylabel("Density")
-    plt.title(f"Bootstrap Test R² Density (n={len(arr)}), 95% CI [{lo:.3f}, {hi:.3f}]")
+    plt.title(f"Bootstrap Test R² Density (n={len(arr)}) — 95% CI shaded")
 
-    # Nice margins
     plt.margins(x=0.02, y=0.05)
     plt.tight_layout()
     plt.savefig(out_path, dpi=300)
