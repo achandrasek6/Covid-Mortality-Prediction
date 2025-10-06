@@ -134,7 +134,7 @@ ax.set_yticklabels(variants, fontsize=14)
 ax.set_xticks(centers)
 ax.set_xticklabels([DISPLAY_LABELS.get(name, name) for name in region_blocks], fontsize=14)
 ax.set_xlabel("↠ Feature regions ↠", fontsize=16, fontweight="bold")
-ax.set_ylabel("↞ Variant ↞", fontsize=16, fontweight="bold")
+ax.set_ylabel("← Variant ←", fontsize=16, fontweight="bold")
 
 
 # ---- Header strip (exact alignment) ----
