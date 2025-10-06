@@ -1,4 +1,4 @@
-# SARS-CoV-2 Case Fatality Rate (CFR) Prediction Pipeline
+# SARS-CoV-2 Case-Fatality Rate (CFR) Prediction Pipeline
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -9,7 +9,29 @@
 
 A production-ready, reproducible pipeline for predicting COVID-19 variant-specific case fatality rates. Built with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**.
 
-**Status: v1.0 (Aug 2025) — Core pipeline shipped with AWS Batch distributed scoring, interpretable Lasso baseline, robustness + explainability. DNABERT model trained (standalone); Nextflow integration pending.**
+**Status: v1.1 (Sep 2025) — Core pipeline shipped: Nextflow DSL2 + AWS Batch distributed scoring, interpretable Lasso baseline, robustness & explainability, and a FastAPI microservice on ECS Fargate (ALB). DNABERT trained (standalone); NF/GPU integration next.**
+
+---
+
+## 📖 Documentation
+
+Use these quick links to jump around this README:
+
+- [🔬 Results at a Glance](#-results-at-a-glance)
+- [📈 Key Figures](#-key-figures)
+- [⚡ TL;DR](#-tldr)
+- [📌 Features](#-features)
+- [🗂️ Repository Layout](#️-repository-layout)
+- [🚀 Local Quickstart](#-local-quickstart)
+- [🧩 API quickstart (Fargate)](#-api-quickstart-fargate)
+- [🧬 Workflow Overview](#-workflow-overview)
+- [⚙️ Productionization](#️-productionization)
+- [💻 CLI by Stage](#-cli-by-stage)
+- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
+- [📊 Outputs](#-outputs)
+- [📌 Roadmap](#-roadmap)
+- [🧰 Troubleshooting](#-troubleshooting)
+- [📜 License](#-license)
 
 ---
 
@@ -118,7 +140,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 | **Lasso (baseline)** | Interpretable coefficients; small, fast; easy to explain | May miss non-linear/long-range effects | Routine surveillance, explainability, bulk scoring                    |
 | **DNABERT (deep)**   | Captures context; headroom for accuracy                  | GPU needed; slower; less transparent   | High-stakes analyses, research scenarios where extra accuracy matters |
 
-## TL;DR
+## ⚡ TL;DR
 
 **Accurate (R² \~0.83), interpretable, and production-ready** genomic risk prediction.
 Deep-learning headroom (DNABERT trained) is available; the shipped Lasso baseline already gives strong accuracy with transparent mutation-level insights and real robustness evidence.
@@ -177,7 +199,7 @@ project/
 
 ---
 
-## 🚀 Quickstart
+## 🚀 Local Quickstart
 
 ### Environment
 ```bash
@@ -187,21 +209,31 @@ conda activate covid-lasso-pipeline
 pip install -r requirements.txt
 ```
 
+### Docker Image
+Build a runtime with all dependencies for the Lasso pipeline.
+```bash
+docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
+docker run --rm -v "$PWD":/work -w /work covid-lasso:aws-preprocess-fix-20250822-0339 \
+  python scripts/ML_model.py --help
+```
+For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data volumes as needed.
+
 ### End-to-end run (Dockerized)
 ```bash
 nextflow run main.nf -profile docker \
   --samples "transformed_data/variant_samples_small.fasta" \
   --outdir results_nf
 ```
-
-### Example: Train & Evaluate Lasso
+>See `nextflow.config` file for full list of arguements.
+### Train & Evaluate Lasso
 ```bash
-python scripts/ML_model.py \
+python scripts/ML_model_CLI_user.py \
   --train-matrix lasso_training_data/feature_matrix_train.csv \
   --test-matrix  lasso_training_data/feature_matrix_test.csv \
   --alpha 0.000174 \
   --out-dir model_artifacts
 ```
+> Run 'extract_features.py' to strip features from training matrix for Nextflow run (see docstring). 
 
 ## 🧩 API quickstart (Fargate)
 
@@ -247,14 +279,14 @@ curl -X POST http://<ALB_DNS>/submit \
 ```
 ### 🔧 Environment (ECS task)
 
-# Required
+**Required**
 ```
 AWS_REGION=us-east-2
 S3_BUCKET=<your-s3-bucket>                  # e.g., covid-cfr-prod-us-east-2
 SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account-id>/<queue-name>
 ```
 
-# Optional
+**Optional**
 ```
 REQUIRE_API_KEY=true                        # set true to enforce API key auth
 API_KEY=<strong-secret-value>               # store in Secrets Manager/Task secrets
@@ -322,27 +354,7 @@ Endpoints can require an API key (`REQUIRE_API_KEY=true`). S3 access uses presig
 
 ---
 
-## 📖 Documentation
 
-Use these quick links to jump around this README:
-
-- [🔬 Results at a Glance](#-results-at-a-glance)
-- [📈 Key Figures](#-key-figures)
-- [📌 Features](#-features)
-- [🗂️ Repository Layout](#️-repository-layout)
-- [🚀 Quickstart](#-quickstart)
-- [🧬 Workflow Overview](#-workflow-overview)
-- [⚙️ Productionization](#️-productionization)
-- [💻 CLI by Stage](#-cli-by-stage)
-- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
-- [🐳 Docker Image](#-docker-image)
-- [📊 Outputs](#-outputs)
-- [📌 Roadmap](#-roadmap)
-- [🧰 Troubleshooting](#-troubleshooting)
-- [📜 License](#-license)
-
-
----
 
 ## 💻 CLI by Stage
 
@@ -456,17 +468,6 @@ See `nextflow.config` for available profiles (e.g., `local`, `docker`), full lis
 
 ---
 
-## 🐳 Docker Image
-Build a runtime with all dependencies for the Lasso pipeline.
-```bash
-docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
-docker run --rm -v "$PWD":/work -w /work covid-lasso:aws-preprocess-fix-20250822-0339 \
-  python scripts/ML_model.py --help
-```
-For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data volumes as needed.
-
----
-
 ## 📊 Outputs
 - **Model artifacts (Lasso):** `model_artifacts/lasso_model.joblib`, `model_artifacts/scaler.joblib`
 - **Model artifacts (DNABERT — trained; NF integration pending):**
@@ -484,25 +485,27 @@ For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data
 
 ## 📌 Roadmap
 
-### ✅ Shipped — v1.1 (Aug/Sep 2025)
+### ✅ Shipped — v1.1 (Sep 2025)
 - Nextflow DSL2 orchestration
 - Dockerized stages with pinned dependencies
 - **AWS Batch** integration for distributed, chunked scoring
+- **FastAPI microservice on ECS Fargate (ALB)** — `/health`, `/predict` (stub), `/presign` (S3 presigned URLs), `/submit` (enqueue to SQS)
+- CI/CD: GitHub Actions (OIDC) → Docker Buildx → **Amazon ECR** (immutable `:<commit_sha>` + `:latest`)
 - Lasso baseline with bootstrap validation
 - Robustness suite (label permutations, feature shuffles, ablations)
 - Explainability (SHAP, LIME)
 - Visualizations & reports (heatmaps, regularization curves)
 - Reproducibility artifacts (models, scalers, run reports)
-- CI/CD (GitHub Actions → build/test mini NF run → push to ECR)
 
-### 🚧 In Flight — v1.1
+### 🚧 In Flight — v1.2
+- **API Gateway + auth/rate limits** in front of Fargate (private ALB via VPC Link)
 - MLflow experiment tracking + model registry (design complete)
-- **Integrate trained DNABERT module into Nextflow pipeline** (optional GPU Batch queue)
+- Wire real model artifacts into `/predict` (scaler + Lasso), improve schema validation
+- **Integrate trained DNABERT module into Nextflow** (optional GPU Batch queue)
 
 ### 🔮 Planned Enhancements — v2 (optional)
-- FastAPI inference on ECS Fargate behind API Gateway (interactive small-batch)
-- Presigned S3 I/O + SQS for async batch submissions
-- Drift monitoring job & report
+- **Presigned S3 I/O + SQS**: end-to-end async batch (worker consumer + status)
+- Drift monitoring job & report (feature/label distribution shifts)
 - Streamlit/Gradio dashboard for explanations
 - Multi-omics extension (RNA-seq, host genetics)
 
