@@ -1,4 +1,4 @@
-name: Build & Push fastapi to ECR
+name: Build, Push & Deploy API to ECS
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
     paths:
       - "app/**"
       - "Dockerfile.api"
+      - "model_artifacts/**"
+      - "lasso_training_data/**"
       - ".github/workflows/ecr-push-fastapi.yml"
 
 jobs:
@@ -20,7 +22,8 @@ jobs:
       ECR_REGISTRY: 802861900950.dkr.ecr.us-east-2.amazonaws.com
       ECR_REPO: covid-cfr-api
       IMAGE_TAG: ${{ github.sha }}
-
+    outputs:
+      image_uri: ${{ steps.meta.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,11 +38,76 @@ jobs:
 
       - name: Build image
         run: |
-          docker build -f Dockerfile.api -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG .
+          docker build -f Dockerfile.api \
+            -t $ECR_REGISTRY/$ECR_REPO:${IMAGE_TAG} .
 
-      - name: Tag & push
+      - name: Push image (sha + latest)
         run: |
-          docker tag $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPO:latest
-          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPO:${IMAGE_TAG}
+          docker tag  $ECR_REGISTRY/$ECR_REPO:${IMAGE_TAG} $ECR_REGISTRY/$ECR_REPO:latest
           docker push $ECR_REGISTRY/$ECR_REPO:latest
 
+      - name: Export image uri
+        id: meta
+        run: echo "image_uri=$ECR_REGISTRY/$ECR_REPO:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+  deploy-ecs:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: us-east-2
+      CLUSTER: covid-cfr
+      SERVICE: covid-cfr-svc
+      CONTAINER_NAME: api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS creds (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::802861900950:role/github-actions-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read current task definition
+        id: td
+        run: |
+          TD_ARN=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" --services "$SERVICE" \
+                    --query 'services[0].taskDefinition' --output text)
+          echo "td_arn=$TD_ARN" >> "$GITHUB_OUTPUT"
+          aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$TD_ARN" \
+            --query 'taskDefinition' > base-td.json
+
+      - name: Render new task definition with new image
+        run: |
+          IMAGE_URI="${{ needs.build-and-push.outputs.image_uri }}"
+          # strip non-registrable fields and swap the container image for CONTAINER_NAME
+          jq '
+            del(.revision,.taskDefinitionArn,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
+            | .containerDefinitions |= map(if .name=="'${CONTAINER_NAME}'" then .image="'${IMAGE_URI}'" else . end)
+          ' base-td.json > new-td.json
+          echo "Rendered task def:"
+          jq '.containerDefinitions[] | {name, image}' new-td.json
+
+      - name: Register new task definition revision
+        id: register
+        run: |
+          NEW_TD_ARN=$(aws ecs register-task-definition --region "$AWS_REGION" \
+                        --cli-input-json file://new-td.json \
+                        --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "new_td_arn=$NEW_TD_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Update service to new task definition
+        run: |
+          aws ecs update-service --region "$AWS_REGION" \
+            --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "${{ steps.register.outputs.new_td_arn }}" \
+            --force-new-deployment
+
+      - name: Wait for service stability
+        run: |
+          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" --services "$SERVICE"
+          aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].deployments[].{Id:id,Status:status,Running:runningCount,Desired:desiredCount}' --output table
