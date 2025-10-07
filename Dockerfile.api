@@ -1,28 +1,32 @@
 # Docker Hub official images mirrored on AWS Public ECR
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
-# System deps: certs; build tools only if you really need compiling
+# System deps (certs); keep slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Non-root user
 RUN useradd -m -u 10001 appuser
 
 # Workdir
 WORKDIR /app
 
-# Copy requirements and install (as root)
+# Install Python deps first (better layer caching)
 COPY app/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy app code and make sure appuser owns it (so logs/tmp can be written)
+# Copy application code
 COPY --chown=appuser:appuser app/ /app/
+
+# Copy model artifacts + training feature header (sibling dirs to /app in your repo)
+COPY --chown=appuser:appuser model_artifacts/ /app/model_artifacts/
+COPY --chown=appuser:appuser lasso_training_data/ /app/lasso_training_data/
 
 # Drop privileges
 USER appuser
 
-# Useful runtime envs (override in ECS as needed)
+# Runtime envs (can override in ECS Task Def)
 ENV PYTHONUNBUFFERED=1 \
     PORT=8080 \
     AWS_REGION=us-east-2 \
@@ -31,12 +35,12 @@ ENV PYTHONUNBUFFERED=1 \
     MODEL_URI=model_artifacts/lasso_model.joblib \
     REQUIRE_API_KEY=false
 
-# Expose container port
+# Expose API port
 EXPOSE 8080
 
-# Healthcheck
+# Container healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request,os,sys; url=f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/health'; urllib.request.urlopen(url, timeout=3).read() and sys.exit(0)"
+  CMD python -c "import urllib.request,os,sys; u=f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/health'; urllib.request.urlopen(u, timeout=3); sys.exit(0)"
 
-# Start uvicorn (module is main:app because /app/main.py)
+# Launch uvicorn (app lives at /app/main.py -> main:app)
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
