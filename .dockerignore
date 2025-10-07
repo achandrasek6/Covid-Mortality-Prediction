@@ -9,3 +9,4 @@ __pycache__/
 .nextflow/
 *.nextflow.log
 data/
+.env*
