@@ -1,4 +1,4 @@
-# Docker Hub official images mirrored on AWS Public ECR
+# Docker Hub official images mirrored on AWS Public ECR -> ECS Direct
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 # System deps (certs); keep slim
