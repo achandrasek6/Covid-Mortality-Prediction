@@ -1,33 +1,52 @@
 # Docker Hub official images mirrored on AWS Public ECR
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
-# Set a non-root user
-RUN useradd -m -u 10001 appuser
-
-WORKDIR /app
-
-# System deps (optional: faster wheels, uv loop perf)
+# System deps: certs; build tools only if you really need compiling
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
+      ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Create non-root user
+RUN useradd -m -u 10001 appuser
+
+# Workdir
+WORKDIR /app
+
+# Copy requirements and install (as root)
 COPY app/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy app code
-COPY app/ /app/
+# Copy app code and make sure appuser owns it (so logs/tmp can be written)
+COPY --chown=appuser:appuser app/ /app/
 
-# Security: drop to non-root
+# Drop privileges
 USER appuser
 
-# Expose the port your service will listen on (ECS uses this)
-ENV PORT=8080
+# Useful runtime envs (override in ECS as needed)
+ENV PYTHONUNBUFFERED=1 \
+    PORT=8080 \
+    AWS_REGION=us-east-2 \
+    FEATURES_URI=lasso_training_data/selected_features.csv \
+    SCALER_URI=model_artifacts/scaler.joblib \
+    MODEL_URI=model_artifacts/lasso_model.joblib \
+    REQUIRE_API_KEY=false
+
+# Expose container port
 EXPOSE 8080
 
-# Healthcheck (optional but good for ECS target group)
+# Container healthcheck (no curl needed)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').environ.get('PORT','8080') + '/health').read()"
+  CMD python - <<'PY' || exit 1
+import os, sys, urllib.request
+port = os.environ.get("PORT", "8080")
+url  = f"http://127.0.0.1:{port}/health"
+try:
+    with urllib.request.urlopen(url, timeout=3) as r:
+        ok = (200 <= r.getcode() < 300)
+        sys.exit(0 if ok else 1)
+except Exception:
+    sys.exit(1)
+PY
 
-# Start uvicorn
+# Start uvicorn (module is main:app because /app/main.py)
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
