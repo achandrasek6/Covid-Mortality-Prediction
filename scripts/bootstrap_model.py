@@ -9,6 +9,11 @@ Description:
     KDE density plot of the bootstrap test-set R² distribution to
     `figures/bootstrap_r2_histogram.png`.
 
+    Visuals:
+      • Central 95% CI shaded green; tails red
+      • NO density outline line (area fills only)
+      • Soft-blue dotted vertical line for Model R² (shown to 3 decimals in legend)
+
 Usage:
     python3 bootstrap_model.py
 """
@@ -25,6 +30,8 @@ from sklearn.metrics import r2_score
 from sklearn.neighbors import KernelDensity
 from joblib import Parallel, delayed
 import multiprocessing
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 # ---------------------------
 # Configuration (hardcoded)
@@ -34,7 +41,8 @@ TEST_CSV     = "../lasso_training_data/feature_matrix_test.csv"
 ALPHA        = 0.000174    # Lasso regularization strength
 N_BOOTSTRAPS = 1000        # Number of bootstrap iterations
 SEED         = 42          # Base random seed
-MODEL_R2     = 0.8306      # Annotated vertical line (will display to 3 decimals)
+MODEL_R2     = 0.8306      # Vertical reference line
+SOFT_BLUE    = "#4F8BD6"   # softer blue for the dotted reference line
 
 def get_output_dir():
     this_path = os.path.abspath(__file__)
@@ -61,8 +69,7 @@ def load_and_scale(train_path, test_path):
     X_test  = df_test[feat_cols].values
     y_test  = df_test["Global CFR"].values
 
-    # with_mean=False to be sparse-friendly if needed
-    scaler = StandardScaler(with_mean=False)
+    scaler = StandardScaler(with_mean=False)  # sparse-friendly
     X_train_s = scaler.fit_transform(X_train)
     X_test_s  = scaler.transform(X_test)
 
@@ -80,7 +87,7 @@ def _bootstrap_iteration(i, X_train_s, y_train, X_test_s, y_test, alpha, seed):
     return r2_score(y_test, model.predict(X_test_s))
 
 # ---------------------------
-# Plot smooth KDE with CI shading
+# Plot smooth KDE with CI shading (no outline) + legend
 # ---------------------------
 def plot_density_with_ci(r2_values, out_dir):
     os.makedirs(out_dir, exist_ok=True)
@@ -113,39 +120,40 @@ def plot_density_with_ci(r2_values, out_dir):
 
     plt.figure(figsize=(9, 4.8))
 
-    # Smooth density curve
-    plt.plot(x, y, linewidth=2)
-
-    # Shade tails (red) and central 95% (green)
+    # ---- NO density outline line (omit plt.plot) ----
+    # Fill tails (red) and central 95% (green) to visualize the KDE
     if np.any(left_tail):
-        plt.fill_between(x[left_tail], y[left_tail], 0, alpha=0.25, color="red")
+        plt.fill_between(x[left_tail], y[left_tail], 0, alpha=0.25, color="red", linewidth=0)
     if np.any(inside):
-        plt.fill_between(x[inside], y[inside], 0, alpha=0.25, color="green")
+        plt.fill_between(x[inside], y[inside], 0, alpha=0.25, color="green", linewidth=0)
     if np.any(right_tail):
-        plt.fill_between(x[right_tail], y[right_tail], 0, alpha=0.25, color="red")
+        plt.fill_between(x[right_tail], y[right_tail], 0, alpha=0.25, color="red", linewidth=0)
 
-    # Vertical dotted line at model R²
-    plt.axvline(MODEL_R2, linestyle=":", linewidth=2)
+    # Vertical dotted line at model R² — soft blue
+    plt.axvline(MODEL_R2, linestyle=":", linewidth=2, color=SOFT_BLUE)
 
-    # Low-profile label (3 decimals, muted styling, no bbox)
-    idx_near = np.argmin(np.abs(x - MODEL_R2))
-    y_near = y[idx_near]
-    x_offset = 0.015 * rng_span
-    plt.text(
-        MODEL_R2 + x_offset,
-        y_near * 0.98,                 # tuck slightly below the curve
-        f"R² = {MODEL_R2:.3f}",        # always 3 decimals
-        fontsize=9,
-        color="0.35",                  # muted gray
-        alpha=0.9,
-        ha="left",
-        va="top"
-    )
-
-    # Minimal title
+    # Axes and title
     plt.xlabel("Test R²")
     plt.ylabel("Density")
     plt.title(f"Bootstrap Test R² Density (n={len(arr)})")
+
+    # Prominent legend (top-left) with numeric model value (3 decimals)
+    legend_handles = [
+        Patch(facecolor="green", alpha=0.25, edgecolor="none", label="95% CI"),
+        Patch(facecolor="red",   alpha=0.25, edgecolor="none", label="Outside 95% CI"),
+        Line2D([0], [0], linestyle=":", linewidth=2, color=SOFT_BLUE, label=f"Model R² = {MODEL_R2:.3f}"),
+    ]
+    leg = plt.legend(
+        handles=legend_handles,
+        loc="upper left",
+        frameon=True,
+        framealpha=0.95,
+        fontsize=10,
+        fancybox=True,
+        borderpad=0.6
+    )
+    for text in leg.get_texts():
+        text.set_fontweight("medium")
 
     plt.margins(x=0.02, y=0.05)
     plt.tight_layout()
