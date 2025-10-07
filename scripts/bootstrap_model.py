@@ -9,10 +9,6 @@ Description:
     KDE density plot of the bootstrap test-set R² distribution to
     `figures/bootstrap_r2_histogram.png`.
 
-    Visuals:
-      • Central 95% CI shaded green, tails red
-      • Vertical dotted line at R² = 0.8306 with a non-overlapping label
-
 Usage:
     python3 bootstrap_model.py
 """
@@ -38,7 +34,7 @@ TEST_CSV     = "../lasso_training_data/feature_matrix_test.csv"
 ALPHA        = 0.000174    # Lasso regularization strength
 N_BOOTSTRAPS = 1000        # Number of bootstrap iterations
 SEED         = 42          # Base random seed
-MODEL_R2     = 0.8306      # Annotated vertical line
+MODEL_R2     = 0.8306      # Annotated vertical line (will display to 3 decimals)
 
 def get_output_dir():
     this_path = os.path.abspath(__file__)
@@ -131,22 +127,25 @@ def plot_density_with_ci(r2_values, out_dir):
     # Vertical dotted line at model R²
     plt.axvline(MODEL_R2, linestyle=":", linewidth=2)
 
-    # Non-overlapping label near the line
+    # Low-profile label (3 decimals, muted styling, no bbox)
     idx_near = np.argmin(np.abs(x - MODEL_R2))
     y_near = y[idx_near]
     x_offset = 0.015 * rng_span
     plt.text(
         MODEL_R2 + x_offset,
-        y_near,
-        f"Model R² = {MODEL_R2:.4f}",
-        va="bottom", ha="left",
-        bbox=dict(boxstyle="round,pad=0.2", alpha=0.3)
+        y_near * 0.98,                 # tuck slightly below the curve
+        f"R² = {MODEL_R2:.3f}",        # always 3 decimals
+        fontsize=9,
+        color="0.35",                  # muted gray
+        alpha=0.9,
+        ha="left",
+        va="top"
     )
 
-    # Labels / title — explicitly note the 95% CI without numbers
+    # Minimal title
     plt.xlabel("Test R²")
     plt.ylabel("Density")
-    plt.title(f"Bootstrap Test R² Density (n={len(arr)}) — 95% CI shaded")
+    plt.title(f"Bootstrap Test R² Density (n={len(arr)})")
 
     plt.margins(x=0.02, y=0.05)
     plt.tight_layout()
