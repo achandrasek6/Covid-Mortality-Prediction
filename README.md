@@ -68,7 +68,7 @@ This heatmap shows the fraction of genomes within each lineage carrying each mut
 
 #### 1) Overall Performance (stability across resamples)
 
-The distribution of test R² across bootstrap resamples centers around the reported score indicating **stable generalization** rather than a single lucky split.
+The model’s R² value falls within the 95% bootstrapped confidence interval, indicating that its performance is representative of the underlying distribution rather than a single favorable data split.
 
 ![Bootstrap Test R² Distribution](figures/bootstrap_r2_histogram.png)
 
