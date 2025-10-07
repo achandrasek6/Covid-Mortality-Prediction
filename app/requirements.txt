@@ -7,3 +7,6 @@ scikit-learn
 joblib
 pandas==2.2.2
 biopython==1.83
+matplotlib
+tensorflow
+transformers
