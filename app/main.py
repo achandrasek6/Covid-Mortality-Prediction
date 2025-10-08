@@ -30,13 +30,13 @@ cat > /tmp/push_down.json <<'JSON'
 JSON
 
 # TEST CALL:
-curl -sS -X POST http://127.0.0.1:8000/predict   -H 'Content-Type: application/json'   --data-binary @/tmp/push_up.json | jq .
-curl -sS -X POST http://127.0.0.1:8000/predict   -H 'Content-Type: application/json'   --data-binary @/tmp/push_down.json | jq .
+curl -sS -X POST $BASE/predict   -H 'Content-Type: application/json'   --data-binary @/tmp/push_up.json | jq .
+curl -sS -X POST $BASE/predict   -H 'Content-Type: application/json'   --data-binary @/tmp/push_down.json | jq .
 
 Feature-space pinning demo
 --------------------------
 # 1) Find the observed SHA:
-curl -s http://127.0.0.1:8000/version
+curl -s $BASE/version
 # → {"feature_file_sha":"80d0645637d5", ...}
 
 # 2) Enforce it (startup will fail if header bytes change):
@@ -50,10 +50,12 @@ export FEATURE_SHA_ENFORCE=warn
 Feature List Endpoint
 -----------------------------
 # JSON
-curl -s http://127.0.0.1:8000/features | jq
+curl -s $BASE/features | jq
 
 # CSV (header-only, with download filename)
-curl -i -s "http://127.0.0.1:8000/features?format=csv"
+curl -i -s "$BASE/features?format=csv"
+
+# For local use, replace $BASE with "http://localhost:8000"
 '''
 
 from fastapi import FastAPI, HTTPException, Header, Query
