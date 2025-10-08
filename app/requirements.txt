@@ -3,7 +3,7 @@ uvicorn[standard]==0.30.6
 pydantic==2.9.2
 boto3==1.35.21
 numpy
-scikit-learn
+scikit-learn==1.4.1.post1
 joblib
 pandas==2.2.2
 biopython==1.83

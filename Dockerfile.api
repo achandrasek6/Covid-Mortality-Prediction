@@ -1,9 +1,9 @@
 # Docker Hub official images mirrored on AWS Public ECR --> ECS Direct
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
-# System deps (certs); keep slim
+# System deps (certs + curl); keep slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
+      ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
@@ -39,8 +39,8 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8080
 
 # Container healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
   CMD python -c "import urllib.request,os,sys; u=f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/health'; urllib.request.urlopen(u, timeout=3); sys.exit(0)"
 
 # Launch uvicorn (app lives at /app/main.py -> main:app)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
