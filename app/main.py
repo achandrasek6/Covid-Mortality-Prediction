@@ -58,11 +58,19 @@ curl -i -s "$BASE/features?format=csv"
 # For local use, replace $BASE with "http://localhost:8000"
 '''
 
-from fastapi import FastAPI, HTTPException, Header, Query
-from pydantic import BaseModel, Field, constr, conint, validator
-from typing import List, Optional, Dict, Literal
+from fastapi import FastAPI, HTTPException, Header, Query, Response
+from pydantic import BaseModel, Field, constr, conint
+try:
+    # pydantic v2
+    from pydantic import field_validator as validator
+except Exception:
+    # pydantic v1 fallback
+    from pydantic import validator  # type: ignore
+
+from typing import List, Optional, Dict, Literal, Any
 from pathlib import Path
-import os, io, json, time, re, logging, hashlib
+from datetime import datetime, timezone
+import os, io, json, time, re, logging, hashlib, uuid
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -71,22 +79,20 @@ import numpy as np
 import pandas as pd
 from joblib import load as joblib_load
 
-from fastapi import Response
-from typing import Literal
-
-app = FastAPI(title="COVID-Lasso Inference API", version="1.7")
+app = FastAPI(title="COVID-Lasso Inference API", version="1.8")
 
 # =========================
-# Config
+# Config / Env
 # =========================
 APP_DIR = Path(__file__).resolve().parent
 ROOT_DIR = APP_DIR.parent
 
-S3_BUCKET = os.getenv("S3_BUCKET", "ach-covid-lasso-us-east-2")
-SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
-AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+AWS_REGION     = os.getenv("AWS_REGION", "us-east-2")
+UPLOADS_BUCKET = os.getenv("UPLOADS_BUCKET", os.getenv("S3_BUCKET", ""))   # legacy fallback to S3_BUCKET
+RESULTS_BUCKET = os.getenv("RESULTS_BUCKET", os.getenv("S3_BUCKET", ""))   # legacy fallback
+SQS_QUEUE_URL  = os.getenv("JOBS_QUEUE_URL") or os.getenv("SQS_QUEUE_URL", "")
+JOBS_TABLE     = os.getenv("JOBS_TABLE", "covid_cfr_jobs")
 
-ALLOWED_PRESIGN_METHODS = ("put_object", "get_object")
 ALLOWED_S3_PREFIXES = ("uploads/", "results/", "tmp/")
 MAX_PRESIGN_SECS = 60 * 60 * 24  # 24h
 
@@ -103,8 +109,9 @@ CALIB_URI    = os.getenv("CALIB_URI",    "")  # optional
 # =========================
 # AWS clients
 # =========================
-s3 = boto3.client("s3", region_name=AWS_REGION)
-sqs = boto3.client("sqs", region_name=AWS_REGION)
+s3   = boto3.client("s3", region_name=AWS_REGION)
+sqs  = boto3.client("sqs", region_name=AWS_REGION)
+dyna = boto3.resource("dynamodb", region_name=AWS_REGION).Table(JOBS_TABLE)
 
 # =========================
 # Logging
@@ -113,35 +120,37 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("api")
 
 # =========================
-# Schemas
+# Schemas (inference)
 # =========================
 class FeaturesPayload(BaseModel):
     sample_id: constr(strip_whitespace=True, min_length=1)
-    # Contract: "<REGION>_<POSITION>" (digits only)
     features: Dict[str, conint(ge=0, le=1)] = Field(..., description="Binary features like ORF1ab_10, S_957, N_203")
 
 class TopFeature(BaseModel):
     feature: str
-    coef: float                # model coefficient
-    contribution: float        # |coef * x_i| for THIS request (in model/standardized space)
-    coef_str: str              # scientific-notation string for display
-    contribution_str: str      # scientific-notation string for display
+    coef: float
+    contribution: float
+    coef_str: str
+    contribution_str: str
 
 class PredictResponse(BaseModel):
     sample_id: str
-    cfr_pred: float                   # single source of truth (final value)
-    cfr_pred_str: Optional[str] = None  # high-precision display helper
-    cfr_pred_pct: Optional[str] = None  # UI convenience (percentage string)
+    cfr_pred: float
+    cfr_pred_str: Optional[str] = None
+    cfr_pred_pct: Optional[str] = None
     model: str
     version: str
     top_features: Optional[List[TopFeature]] = None
-    feature_file_sha: Optional[str] = None  # provenance for header file
+    feature_file_sha: Optional[str] = None
 
+# =========================
+# Schemas (jobs & presign)
+# =========================
 class PresignRequest(BaseModel):
     key: constr(strip_whitespace=True, min_length=3)
     method: Literal["put_object", "get_object"] = "put_object"
     content_type: Optional[str] = "application/octet-stream"
-    expires_in: int = 3600
+    expires_in: int = 900
 
     @validator("expires_in")
     def _cap_exp(cls, v):
@@ -163,14 +172,20 @@ class PresignResponse(BaseModel):
     method: Literal["put_object", "get_object"]
 
 class SubmitJob(BaseModel):
-    input_s3: constr(strip_whitespace=True)
-    output_s3: constr(strip_whitespace=True)
-    params: Optional[Dict[str, str]] = None
+    input_s3: constr(strip_whitespace=True)    # e.g. f"s3://{UPLOADS_BUCKET}/uploads/<RUN_ID>/"
+    output_s3: constr(strip_whitespace=True)   # e.g. f"s3://{RESULTS_BUCKET}/results/<RUN_ID>/"
+    params: Dict[str, Any] = {}
     idempotency_key: Optional[constr(strip_whitespace=True, min_length=6)] = None
 
 class SubmitResponse(BaseModel):
     job_id: str
-    status: Literal["queued"]
+    status: Literal["QUEUED"]
+
+class StatusResponse(BaseModel):
+    job_id: str
+    status: str
+    message: Optional[str] = None
+    artifacts: Optional[List[Dict[str, str]]] = None  # [{name,url}]
 
 # =========================
 # Auth helper
@@ -180,7 +195,7 @@ def require_api_key(x_api_key: Optional[str]):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 # =========================
-# Feature-name contract (strict: <REGION>_<POSITION>, digits only)
+# Feature-name contract
 # =========================
 GENES = ("S","N","M","E","ORF1ab","ORF3a","ORF6","ORF7a","ORF7b","ORF8","ORF10")
 _FEATURE_PATTERN = re.compile(rf"^(?:{'|'.join(GENES)})_[0-9]{{1,7}}$")
@@ -211,7 +226,7 @@ def _warn_unknown_valid_keys(payload_keys: Dict[str,int], feature_order: List[st
         log.warning({"msg": "unknown_valid_features_ignored", "count": len(unknown_valid), "sample": unknown_valid[:10]})
 
 # =========================
-# Artifact loading (local paths for now)
+# Artifact loading (local paths)
 # =========================
 def _read_bytes_local(path: str) -> bytes:
     with open(path, "rb") as f:
@@ -251,7 +266,6 @@ def _load_artifacts():
         feat_bytes = _read_bytes_local(FEATURES_URI)
         FEATURE_FILE_SHA = _sha256_hex(feat_bytes)[:12]
 
-        # Enforce expected feature header fingerprint (provenance guard)
         expected_sha = os.getenv("EXPECTED_FEATURE_SHA", "").strip()
         enforce = os.getenv("FEATURE_SHA_ENFORCE", "strict").lower()
         if expected_sha:
@@ -311,11 +325,6 @@ def _vectorize(features: Dict[str, int]) -> np.ndarray:
     return x
 
 def _top_features_linear(model, Xs: np.ndarray, k: int = 10) -> List[TopFeature]:
-    """
-    Return top-k features that actually contributed for THIS input.
-    Sort by |coef * x| in model space. If all contributions are zero,
-    fall back to largest |coef| (non-zero).
-    """
     if not hasattr(model, "coef_"):
         return []
     coef = np.asarray(model.coef_, dtype=float).ravel()
@@ -349,7 +358,47 @@ def _top_features_linear(model, Xs: np.ndarray, k: int = 10) -> List[TopFeature]
     return out
 
 # =========================
-# Routes
+# Small utils for jobs
+# =========================
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _new_job_id() -> str:
+    return str(uuid.uuid4())
+
+def _bucket_for_key(key: str) -> str:
+    if key.startswith("uploads/"):
+        if not UPLOADS_BUCKET:
+            raise HTTPException(500, "UPLOADS_BUCKET not configured")
+        return UPLOADS_BUCKET
+    if key.startswith("results/") or key.startswith("tmp/"):
+        if not RESULTS_BUCKET:
+            raise HTTPException(500, "RESULTS_BUCKET not configured")
+        return RESULTS_BUCKET
+    raise HTTPException(400, f"key must start with one of: {ALLOWED_S3_PREFIXES}")
+
+def _list_results_and_presign(output_s3: str, expires=900) -> List[Dict[str, str]]:
+    # output_s3 like s3://bucket/results/<RUN_ID>/
+    if not output_s3.startswith("s3://"):
+        return []
+    _, rest = output_s3.split("s3://", 1)
+    bucket, prefix = rest.split("/", 1)
+    if not prefix.endswith("/"):
+        prefix += "/"
+
+    artifacts: List[Dict[str, str]] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith("/"):
+                continue
+            url = s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires)
+            artifacts.append({"name": key.rsplit("/", 1)[-1], "url": url})
+    return artifacts
+
+# =========================
+# Routes — health/version
 # =========================
 @app.get("/health")
 def health():
@@ -359,11 +408,14 @@ def health():
 def version():
     return {"model_version": MODEL_VERSION, "feature_file_sha": FEATURE_FILE_SHA}
 
+# =========================
+# Routes — inference
+# =========================
 @app.post("/predict", response_model=PredictResponse)
 def predict(
     body: FeaturesPayload,
     x_api_key: Optional[str] = Header(None),
-    debug: bool = Query(False),  # keep for future: include extra fields only when needed
+    debug: bool = Query(False),
 ):
     require_api_key(x_api_key)
     if MODEL is None or SCALER is None:
@@ -387,13 +439,13 @@ def predict(
 
     if CALIB is not None:
         try:
-            y = float(CALIB.predict(np.array([[y]]))[0])  # many calibrators expect (N,1)
+            y = float(CALIB.predict(np.array([[y]]))[0])
         except Exception:
             log.warning("calibration failed; returning uncalibrated value")
 
     tops = _top_features_linear(MODEL, Xs, k=10)
 
-    resp = PredictResponse(
+    return PredictResponse(
         sample_id=body.sample_id,
         cfr_pred=y,
         cfr_pred_str=f"{y:.12g}",
@@ -404,12 +456,7 @@ def predict(
         feature_file_sha=FEATURE_FILE_SHA,
     )
 
-    # If in future you want to expose additional internals (e.g., raw pre-calibration value),
-    # add them conditionally when `debug=True`.
-
-    return resp
-
-@app.get("/features", response_model=None)
+@app.get("/features")
 def get_features(format: Literal["json", "csv"] = "json"):
     if not FEATURE_ORDER:
         raise HTTPException(status_code=503, detail="feature order not loaded")
@@ -425,54 +472,110 @@ def get_features(format: Literal["json", "csv"] = "json"):
         }
         return Response(content=csv_line, media_type="text/csv", headers=headers)
 
-    # JSON (default)
-    return {
-        "sha": etag,
-        "count": len(FEATURE_ORDER),
-        "features": FEATURE_ORDER,
-    }
+    return {"sha": etag, "count": len(FEATURE_ORDER), "features": FEATURE_ORDER}
 
+# =========================
+# Routes — presign / submit / status
+# =========================
 @app.post("/presign", response_model=PresignResponse)
 def presign(req: PresignRequest, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
+
+    # safety: only allow PUTs under uploads/
+    if req.method == "put_object" and not req.key.startswith("uploads/"):
+        raise HTTPException(status_code=400, detail="PUTs must be under uploads/<RUN_ID>/...")
+
+    bucket = _bucket_for_key(req.key)
     try:
         if req.method == "put_object":
             url = s3.generate_presigned_url(
                 ClientMethod="put_object",
-                Params={"Bucket": S3_BUCKET, "Key": req.key, "ContentType": req.content_type},
+                Params={"Bucket": bucket, "Key": req.key, "ContentType": req.content_type},
                 ExpiresIn=req.expires_in
             )
         else:
             url = s3.generate_presigned_url(
                 ClientMethod="get_object",
-                Params={"Bucket": S3_BUCKET, "Key": req.key},
+                Params={"Bucket": bucket, "Key": req.key},
                 ExpiresIn=req.expires_in
             )
-        return PresignResponse(bucket=S3_BUCKET, key=req.key, url=url, expires_in=req.expires_in, method=req.method)
+        return PresignResponse(bucket=bucket, key=req.key, url=url, expires_in=req.expires_in, method=req.method)
     except (BotoCoreError, ClientError):
         log.exception("presign failed")
         raise HTTPException(status_code=502, detail="presign error")
 
-@app.post("/submit", response_model=SubmitResponse)
+@app.post("/submit", response_model=SubmitResponse, status_code=202)
 def submit(job: SubmitJob, x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
     if not SQS_QUEUE_URL:
         raise HTTPException(status_code=500, detail="SQS not configured")
+    if not (job.input_s3.startswith("s3://") and job.output_s3.startswith("s3://")):
+        raise HTTPException(400, "input_s3/output_s3 must be s3://...")
 
-    msg = {
+    job_id = job.idempotency_key or _new_job_id()
+    item = {
+        "job_id": job_id,
+        "status": "QUEUED",
         "input_s3": job.input_s3,
         "output_s3": job.output_s3,
         "params": job.params or {},
-        "requested_at": int(time.time()),
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
     }
+
+    # Idempotent upsert: let it succeed if item missing OR existing status is one of allowed
     try:
-        kwargs = dict(QueueUrl=SQS_QUEUE_URL, MessageBody=json.dumps(msg))
-        if job.idempotency_key:
-            kwargs["MessageAttributes"] = {
-                "IdempotencyKey": {"DataType": "String", "StringValue": job.idempotency_key}
-            }
-        resp = sqs.send_message(**kwargs)
-        return SubmitResponse(job_id=resp.get("MessageId"), status="queued")
+        dyna.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(job_id) OR #s IN (:q,:r,:f)",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":q": "QUEUED", ":r": "RUNNING", ":f": "FAILED"},
+        )
+    except ClientError as e:
+        # If ConditionalCheckFailed, we’ll still enqueue using same job_id to be safe
+        if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+            log.exception("Dynamo put_item failed")
+            raise HTTPException(502, "job registry error")
+
+    msg_body = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "input_s3": job.input_s3,
+        "output_s3": job.output_s3,
+        "params": job.params or {},
+        "enqueued_at": _now_iso(),
+    }
+
+    try:
+        kwargs = {"QueueUrl": SQS_QUEUE_URL, "MessageBody": json.dumps(msg_body)}
+        # Only set MessageGroupId for FIFO queues; omit otherwise
+        if SQS_QUEUE_URL.endswith(".fifo"):
+            kwargs["MessageGroupId"] = str(hash(job_id) % (10**12))
+        sqs.send_message(**kwargs)
     except (BotoCoreError, ClientError):
-        log.exception("submit failed")
+        log.exception("SQS send_message failed")
         raise HTTPException(status_code=502, detail="queue error")
+
+    return SubmitResponse(job_id=job_id, status="QUEUED")
+
+@app.get("/status", response_model=StatusResponse)
+def status(job_id: str, x_api_key: Optional[str] = Header(None)):
+    require_api_key(x_api_key)
+    try:
+        r = dyna.get_item(Key={"job_id": job_id})
+    except (BotoCoreError, ClientError):
+        log.exception("Dynamo get_item failed")
+        raise HTTPException(502, "job registry read error")
+
+    if "Item" not in r:
+        raise HTTPException(404, f"job_id {job_id} not found")
+    item = r["Item"]
+
+    resp = StatusResponse(job_id=job_id, status=item["status"], message=item.get("message"))
+    if item["status"] == "SUCCEEDED":
+        try:
+            resp.artifacts = _list_results_and_presign(item["output_s3"])
+        except Exception:
+            log.exception("listing artifacts failed")
+            # still return status without artifacts
+    return resp
