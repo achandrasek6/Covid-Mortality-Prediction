@@ -360,7 +360,12 @@ def _top_features_linear(model, Xs: np.ndarray, k: int = 10) -> List[TopFeature]
 # =========================
 # Small utils for jobs
 # =========================
+def _now_ts() -> int:
+    """Epoch seconds (int) – used by Dynamo GSI sort key."""
+    return int(time.time())
+
 def _now_iso() -> str:
+    """ISO8601 – kept for human-readable auditing."""
     return datetime.now(timezone.utc).isoformat()
 
 def _new_job_id() -> str:
@@ -512,15 +517,20 @@ def submit(job: SubmitJob, x_api_key: Optional[str] = Header(None)):
     if not (job.input_s3.startswith("s3://") and job.output_s3.startswith("s3://")):
         raise HTTPException(400, "input_s3/output_s3 must be s3://...")
 
-    job_id = job.idempotency_key or _new_job_id()
+    job_id  = job.idempotency_key or _new_job_id()
+    now_ts  = _now_ts()   # << numeric for GSI sort key
+    now_iso = _now_iso()  # optional human-readable copy
+
     item = {
         "job_id": job_id,
         "status": "QUEUED",
+        "created_at": now_ts,          # << Number (N)
+        "updated_at": now_ts,          # << Number (N)
+        "created_at_iso": now_iso,     # optional (String)
+        "updated_at_iso": now_iso,     # optional (String)
         "input_s3": job.input_s3,
         "output_s3": job.output_s3,
         "params": job.params or {},
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
     }
 
     # Idempotent upsert: let it succeed if item missing OR existing status is one of allowed
@@ -532,10 +542,9 @@ def submit(job: SubmitJob, x_api_key: Optional[str] = Header(None)):
             ExpressionAttributeValues={":q": "QUEUED", ":r": "RUNNING", ":f": "FAILED"},
         )
     except ClientError as e:
-        # If ConditionalCheckFailed, we’ll still enqueue using same job_id to be safe
         if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
             log.exception("Dynamo put_item failed")
-            raise HTTPException(502, "job registry error")
+            raise HTTPException(status_code=502, detail="job registry error")
 
     msg_body = {
         "schema_version": 1,
@@ -543,12 +552,11 @@ def submit(job: SubmitJob, x_api_key: Optional[str] = Header(None)):
         "input_s3": job.input_s3,
         "output_s3": job.output_s3,
         "params": job.params or {},
-        "enqueued_at": _now_iso(),
+        "enqueued_at": now_iso,
     }
 
     try:
         kwargs = {"QueueUrl": SQS_QUEUE_URL, "MessageBody": json.dumps(msg_body)}
-        # Only set MessageGroupId for FIFO queues; omit otherwise
         if SQS_QUEUE_URL.endswith(".fifo"):
             kwargs["MessageGroupId"] = str(hash(job_id) % (10**12))
         sqs.send_message(**kwargs)
@@ -577,5 +585,5 @@ def status(job_id: str, x_api_key: Optional[str] = Header(None)):
             resp.artifacts = _list_results_and_presign(item["output_s3"])
         except Exception:
             log.exception("listing artifacts failed")
-            # still return status without artifacts
     return resp
+
