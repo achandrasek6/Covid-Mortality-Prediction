@@ -3,7 +3,7 @@
 # Unique GH Actions workflow for the **runner** image → Amazon ECR
 # Repo: 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-cfr-nf-runner
 # Region: us-east-2
-# Auth: OIDC (no static AWS keys)
+# Auth: OIDC (no static AWS-keys)
 # -----------------------------------------------------------------------------
 # ONE‑TIME AWS SETUP (new, distinct role — avoids clashing with your other workflow)
 #   ROLE_NAME=GitHubActionsECRPushRunner
