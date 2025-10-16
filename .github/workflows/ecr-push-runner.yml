@@ -1,0 +1,112 @@
+# .github/workflows/ecr-push-runner.yml
+# -----------------------------------------------------------------------------
+# Unique GH Actions workflow for the **runner** image → Amazon ECR
+# Repo: 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-cfr-nf-runner
+# Region: us-east-2
+# Auth: OIDC (no static AWS keys)
+# -----------------------------------------------------------------------------
+# ONE‑TIME AWS SETUP (new, distinct role — avoids clashing with your other workflow)
+#   ROLE_NAME=GitHubActionsECRPushRunner
+#   # Trust policy (replace ORG/REPO):
+#   aws iam create-role --role-name $ROLE_NAME --assume-role-policy-document '{
+#     "Version":"2012-10-17",
+#     "Statement":[{
+#       "Effect":"Allow",
+#       "Principal":{"Federated":"arn:aws:iam::802861900950:oidc-provider/token.actions.githubusercontent.com"},
+#       "Action":"sts:AssumeRoleWithWebIdentity",
+#       "Condition":{
+#         "StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com"},
+#         "StringLike":{"token.actions.githubusercontent.com:sub":"repo:ORG/REPO:*"}
+#       }
+#     }]}'
+#   # Minimal ECR push permissions scoped to this repository
+#   aws iam put-role-policy --role-name $ROLE_NAME --policy-name ECRPushRunner --policy-document '{
+#     "Version":"2012-10-17",
+#     "Statement":[
+#       {"Effect":"Allow","Action":["ecr:GetAuthorizationToken"],"Resource":"*"},
+#       {"Effect":"Allow","Action":[
+#         "ecr:BatchCheckLayerAvailability","ecr:CompleteLayerUpload","ecr:DescribeRepositories",
+#         "ecr:GetDownloadUrlForLayer","ecr:InitiateLayerUpload","ecr:PutImage","ecr:UploadLayerPart"
+#       ],"Resource":"arn:aws:ecr:us-east-2:802861900950:repository/covid-cfr-nf-runner"}
+#     ]}'
+#   # (Optional) Create the repo if needed:
+#   # aws ecr create-repository --repository-name covid-cfr-nf-runner --image-scanning-configuration scanOnPush=true
+# -----------------------------------------------------------------------------
+
+name: Build & Push Runner → ECR
+
+on:
+  push:
+    branches: [ main ]
+    # Trigger only when runner-related files change (adjust paths if your runner lives elsewhere)
+    paths:
+      - "main.nf"
+      - "nextflow.config"
+      - "nf-runner/Dockerfile"
+      - "nf-runner/entrypoint.sh"
+      - ".github/workflows/ecr-push-runner.yml"
+  workflow_dispatch:
+  tags:
+    - "v*.*.*"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ACCOUNT_ID: "802861900950"
+  ECR_REPOSITORY: covid-cfr-nf-runner
+  IMAGE_URI_BASE: 802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-cfr-nf-runner
+
+concurrency:
+  group: ecr-runner-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::802861900950:role/GitHubActionsECRPushRunner  # <— unique role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract Docker metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_URI_BASE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=tag
+            type=schedule,pattern={{date \"YYYYMMDD\"}}
+
+      - name: Build and push (runner)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./nf-runner/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.IMAGE_URI_BASE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_URI_BASE }}:buildcache,mode=max
+
+      - name: Output pushed tags
+        run: |
+          echo "Pushed:"
+          echo "${{ steps.meta.outputs.tags }}" | tr ' ' '\n'
