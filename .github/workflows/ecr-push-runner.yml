@@ -38,7 +38,7 @@ name: Build & Push Runner → ECR
 on:
   push:
     branches: [ main ]
-    # Trigger only when runner-related files change (adjust paths if your runner lives elsewhere)
+    tags: [ "v*.*.*" ]         # also run when you push a version tag
     paths:
       - "main.nf"
       - "nextflow.config"
@@ -46,8 +46,6 @@ on:
       - "nf-runner/entrypoint.sh"
       - ".github/workflows/ecr-push-runner.yml"
   workflow_dispatch:
-  tags:
-    - "v*.*.*"
 
 permissions:
   id-token: write
