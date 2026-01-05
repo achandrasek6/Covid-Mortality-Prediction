@@ -2084,7 +2084,7 @@ function App() {
               margin: 0,
             }}
           >
-            COVID-19 CFR Prediction Console (Demo)
+            COVID-19 CFR Prediction Console
           </h1>
           <p style={{ marginTop: 6, fontSize: "12px", color: "#64748b" }}>
             Run a CFR prediction job on SARS-CoV-2 genomes, track status live, and download results.
