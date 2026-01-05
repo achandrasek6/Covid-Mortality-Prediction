@@ -1,0 +1,176 @@
+/* Root wrapper */
+.app-root {
+  min-height: 100vh;
+  background: #f3f4f6;
+  padding: 2rem;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Main shell – widen this to ~1400–1500px */
+.app-shell {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* Title + subtitle */
+.app-header {
+  margin-bottom: 1.5rem;
+}
+
+.app-title {
+  font-size: 2.1rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.app-subtitle {
+  color: #4b5563;
+  font-size: 0.95rem;
+}
+
+/* Two-column layout */
+.app-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.1fr);
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+/* Cards */
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  padding: 1.75rem 1.75rem 1.5rem;
+}
+
+/* Form bits */
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.section-help {
+  font-size: 0.9rem;
+  color: #6b7280;
+  margin-bottom: 1.25rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.field small {
+  display: block;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+/* Select + input */
+.select,
+.text-input {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #d1d5db;
+  font-size: 0.9rem;
+}
+
+/* Buttons */
+.button-primary {
+  width: 100%;
+  padding: 0.7rem 1.2rem;
+  border-radius: 999px;
+  border: none;
+  background: #2563eb;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button-secondary {
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  background: white;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* Status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.status-SUBMITTED,
+.status-RUNNING {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.status-SUCCEEDED {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-FAILED {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* Jobs table */
+.jobs-table {
+  margin-top: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 1rem;
+}
+
+.jobs-table h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.jobs-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+}
+
+.jobs-table th {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.jobs-table td.job-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 0.75rem;
+  max-width: 200px;
+  word-break: break-all;
+}
