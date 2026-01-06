@@ -6,6 +6,32 @@ const API_BASE =
   import.meta.env.VITE_API_BASE ||
   "https://dhjv2dg2l1.execute-api.us-east-2.amazonaws.com/dev";
 
+// ✅ API key support (API Gateway expects x-api-key)
+const API_KEY_HEADER = "x-api-key";
+
+const SEND_API_KEY_ON_STATUS = false;
+
+function withApiKeyHeaders(apiKey: string, headers?: HeadersInit): HeadersInit {
+  const key = apiKey.trim();
+  if (!key) return headers || {};
+  return { ...(headers || {}), [API_KEY_HEADER]: key };
+}
+
+// Safer error extraction (handles non-JSON errors)
+async function readErrorMessage(resp: Response): Promise<string> {
+  try {
+    const data = await resp.clone().json();
+    return data?.error || data?.message || resp.statusText || "Request failed";
+  } catch {
+    try {
+      const text = await resp.clone().text();
+      return text || resp.statusText || "Request failed";
+    } catch {
+      return resp.statusText || "Request failed";
+    }
+  }
+}
+
 type JobStatus = {
   job_id: string;
   status: string;
@@ -66,12 +92,12 @@ const SAMPLE_OPTIONS = [
     hint:
       "Single-file demo: one FASTA containing a small set of SARS-CoV-2 genomes.",
   },
-  {
-    label: "Demo (multi-file input): demo FASTA + reject test",
-    value: "s3://ach-covid-lasso-us-east-2/inputs/test_samples/*",
-    hint:
-      "Multi-file demo: includes (1) A small SARS-CoV-2 variant samples file and (2) a reject test file where some records intentionally fail validation and are routed to a rejected output.",
-  },
+      {
+      label: "Demo (multi-file input): demo FASTA + reject test",
+      value: "s3://ach-covid-lasso-us-east-2/inputs/test_samples/multifile_demo/*",
+      hint:
+        "Multi-file demo: includes (1) A small SARS-CoV-2 variant samples file and (2) a reject test file where some records intentionally fail validation and are routed to a rejected output.",
+    },
 ];
 
 const REFERENCE_OPTIONS = [
@@ -247,10 +273,24 @@ function useWindowWidth() {
   return w;
 }
 
-async function fetchJobStatus(jobId: string): Promise<JobStatus> {
-  const resp = await fetch(`${API_BASE}/status/${encodeURIComponent(jobId)}`);
+// ✅ Status fetch (conditionally sends x-api-key)
+async function fetchJobStatus(jobId: string, apiKey: string): Promise<JobStatus> {
+  const baseHeaders: HeadersInit = { Accept: "application/json" };
+
+  const headers = SEND_API_KEY_ON_STATUS
+    ? withApiKeyHeaders(apiKey, baseHeaders)
+    : baseHeaders;
+
+  const resp = await fetch(`${API_BASE}/status/${encodeURIComponent(jobId)}`, {
+    method: "GET",
+    headers,
+  });
+
+  if (!resp.ok) {
+    throw new Error(await readErrorMessage(resp));
+  }
+
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data?.error || "Failed to fetch job status");
   return data as JobStatus;
 }
 
@@ -886,6 +926,9 @@ const SESSION_KEY = "covid_cfr_console_state_v1";
 type PersistedStateV1 = {
   v: 1;
 
+  // ✅ new: persist apiKey for this tab/session
+  apiKey?: string;
+
   // table + client-only metadata
   recentJobs: JobStatus[];
   jobMetaById: Record<string, JobMeta>;
@@ -971,6 +1014,9 @@ function App() {
 
   const [lifecycleOpen, setLifecycleOpen] = useState(false);
 
+  // ✅ API key state (sent as x-api-key)
+  const [apiKey, setApiKey] = useState("");
+
   // form state
   const [sampleChoice, setSampleChoice] = useState(SAMPLE_OPTIONS[0].value);
   const [useCustomSamples, setUseCustomSamples] = useState(false);
@@ -983,7 +1029,8 @@ function App() {
 
   const selectedModelPackage = useMemo(() => {
     return (
-      MODEL_PACKAGES[modelPackageChoice] || MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value]
+      MODEL_PACKAGES[modelPackageChoice] ||
+      MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value]
     );
   }, [modelPackageChoice]);
 
@@ -1063,7 +1110,9 @@ function App() {
 
   // Demo-lock behavior: checkbox can show the custom field, but the dropdown controls the actual value.
   const effectiveSamples =
-    useCustomSamples && !DEMO_LOCK_CUSTOM_S3 ? customSamples.trim() : sampleChoice;
+    useCustomSamples && !DEMO_LOCK_CUSTOM_S3
+      ? customSamples.trim()
+      : sampleChoice;
 
   const effectiveOutdir =
     useCustomOutdir && !DEMO_LOCK_CUSTOM_S3 ? customOutdir.trim() : outdirChoice;
@@ -1192,7 +1241,7 @@ function App() {
     if (!id) return;
     setStatusError(null);
     try {
-      const data = await fetchJobStatus(id);
+      const data = await fetchJobStatus(id, apiKey);
       setCurrentJob(data);
       setSelectedJobId(id);
       upsertRecentJobStable(data);
@@ -1211,15 +1260,24 @@ function App() {
     setHasLiveFile(false);
 
     if (restored) {
+      // ✅ restore apiKey
+      setApiKey(typeof restored.apiKey === "string" ? restored.apiKey : "");
+
       // Restore table + metadata
-      setRecentJobs(Array.isArray(restored.recentJobs) ? restored.recentJobs : []);
+      setRecentJobs(
+        Array.isArray(restored.recentJobs) ? restored.recentJobs : []
+      );
       setJobMetaById(restored.jobMetaById || {});
       setJobInputsById(restored.jobInputsById || {});
       setJobModelPackageById(restored.jobModelPackageById || {});
 
       // Restore selection / highlight
-      const restoredJobIds = new Set((restored.recentJobs || []).map((j) => j.job_id));
-      const cleanedChecked = (restored.checkedIds || []).filter((id) => restoredJobIds.has(id));
+      const restoredJobIds = new Set(
+        (restored.recentJobs || []).map((j) => j.job_id)
+      );
+      const cleanedChecked = (restored.checkedIds || []).filter((id) =>
+        restoredJobIds.has(id)
+      );
       setCheckedIds(new Set(cleanedChecked));
 
       const restoredSelected =
@@ -1234,9 +1292,13 @@ function App() {
 
       // Restore filters/sort/paging
       setQuery(typeof restored.query === "string" ? restored.query : "");
-      setStatusFilter(typeof restored.statusFilter === "string" ? restored.statusFilter : "ALL");
+      setStatusFilter(
+        typeof restored.statusFilter === "string" ? restored.statusFilter : "ALL"
+      );
       setTimeFilterMinutes(
-        typeof restored.timeFilterMinutes === "number" ? restored.timeFilterMinutes : -1
+        typeof restored.timeFilterMinutes === "number"
+          ? restored.timeFilterMinutes
+          : -1
       );
       setSortKey(restored.sortKey === "created" ? "created" : "updated");
       setSortDir(restored.sortDir === "asc" ? "asc" : "desc");
@@ -1249,27 +1311,39 @@ function App() {
       // Restore form drafts
       setJobName(typeof restored.jobNameDraft === "string" ? restored.jobNameDraft : "");
       setJobDescription(
-        typeof restored.jobDescriptionDraft === "string" ? restored.jobDescriptionDraft : ""
+        typeof restored.jobDescriptionDraft === "string"
+          ? restored.jobDescriptionDraft
+          : ""
       );
 
       // Restore submit form choices
       setSampleChoice(
-        typeof restored.sampleChoice === "string" ? restored.sampleChoice : SAMPLE_OPTIONS[0].value
+        typeof restored.sampleChoice === "string"
+          ? restored.sampleChoice
+          : SAMPLE_OPTIONS[0].value
       );
       setUseCustomSamples(!!restored.useCustomSamples);
-      setCustomSamples(typeof restored.customSamples === "string" ? restored.customSamples : "");
+      setCustomSamples(
+        typeof restored.customSamples === "string" ? restored.customSamples : ""
+      );
 
       // ✅ FIX: narrow persisted string into ModelPackageChoice
       const restoredPkg = restored.modelPackageChoice;
       setModelPackageChoice(
-        isModelPackageChoice(restoredPkg) ? restoredPkg : MODEL_PACKAGE_OPTIONS[0].value
+        isModelPackageChoice(restoredPkg)
+          ? restoredPkg
+          : MODEL_PACKAGE_OPTIONS[0].value
       );
 
       setOutdirChoice(
-        typeof restored.outdirChoice === "string" ? restored.outdirChoice : OUTDIR_OPTIONS[0].value
+        typeof restored.outdirChoice === "string"
+          ? restored.outdirChoice
+          : OUTDIR_OPTIONS[0].value
       );
       setUseCustomOutdir(!!restored.useCustomOutdir);
-      setCustomOutdir(typeof restored.customOutdir === "string" ? restored.customOutdir : "");
+      setCustomOutdir(
+        typeof restored.customOutdir === "string" ? restored.customOutdir : ""
+      );
 
       // display-only
       setLocalFileName(
@@ -1297,6 +1371,8 @@ function App() {
     persistTimerRef.current = window.setTimeout(() => {
       writePersistedState({
         v: 1,
+
+        apiKey,
 
         recentJobs,
         jobMetaById,
@@ -1339,6 +1415,7 @@ function App() {
     };
   }, [
     isHydrated,
+    apiKey,
     recentJobs,
     jobMetaById,
     jobInputsById,
@@ -1383,7 +1460,8 @@ function App() {
     const inputs = jobInputsById[currentJob.job_id];
 
     const pkgLabel =
-      jobModelPackageById[currentJob.job_id] || MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value].label;
+      jobModelPackageById[currentJob.job_id] ||
+      MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value].label;
 
     const nameLine = `Name: ${meta?.name || "— (not available)"}\n`;
     const idLine = `Job ID: ${currentJob.job_id}\n`;
@@ -1391,7 +1469,9 @@ function App() {
 
     const advancedBlock =
       `\nAdvanced settings (fixed for demo):\n` +
-      `• Min alignment identity: ${Math.round(ADVANCED_DEFAULTS.min_alignment_identity * 100)}%\n` +
+      `• Min alignment identity: ${Math.round(
+        ADVANCED_DEFAULTS.min_alignment_identity * 100
+      )}%\n` +
       `• Chunk size (samples): ${ADVANCED_DEFAULTS.chunk_size_samples}\n` +
       `• Max branches: ${ADVANCED_DEFAULTS.max_branches}\n`;
 
@@ -1423,11 +1503,17 @@ function App() {
       );
     })();
 
-    openModal("Job details", nameLine + idLine + descLine + inputsBlock + advancedBlock);
+    openModal(
+      "Job details",
+      nameLine + idLine + descLine + inputsBlock + advancedBlock
+    );
   }
 
   function openLifecycleHelp() {
-    openModal("Status help", "Hover any status pill to see what it means.\n\n✓ = succeeded\n⚠ = failed");
+    openModal(
+      "Status help",
+      "Hover any status pill to see what it means.\n\n✓ = succeeded\n⚠ = failed"
+    );
   }
 
   function openTableInfo() {
@@ -1440,6 +1526,33 @@ function App() {
         "• Delete selected: removes completed jobs (SUCCEEDED/FAILED) from this browser list only.",
       ].join("\n")
     );
+  }
+
+  // ✅ Download via API (needed because headers like x-api-key cannot be sent by <a href>)
+  async function downloadZipViaApi(jobId: string) {
+    const resp = await fetch(
+      `${API_BASE}/results/${encodeURIComponent(jobId)}/zip`,
+      {
+        method: "GET",
+        headers: withApiKeyHeaders(apiKey, { Accept: "application/zip" }),
+      }
+    );
+
+    if (!resp.ok) {
+      throw new Error(await readErrorMessage(resp));
+    }
+
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `results_${jobId}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(blobUrl);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -1473,12 +1586,15 @@ function App() {
     try {
       const resp = await fetch(`${API_BASE}/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withApiKeyHeaders(apiKey, {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        }),
         body: JSON.stringify(payload),
       });
 
+      if (!resp.ok) throw new Error(await readErrorMessage(resp));
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || "Failed to submit job");
 
       const jobId = data.job_id as string;
       const nowIso = new Date().toISOString();
@@ -1508,7 +1624,10 @@ function App() {
       setSubmitInfo(`Submitted job. Job ID: ${jobId}`);
 
       setQuery("");
-      if (statusFilter !== "ALL" && statusFilter !== normalizeStatus(initial.status)) {
+      if (
+        statusFilter !== "ALL" &&
+        statusFilter !== normalizeStatus(initial.status)
+      ) {
         setStatusFilter("ALL");
       }
 
@@ -1525,9 +1644,18 @@ function App() {
     }
   }
 
-  function handleDownload(job: JobStatus) {
-    const url = job.download_url || `${API_BASE}/results/${job.job_id}/zip`;
-    triggerDownload(url);
+  async function handleDownload(job: JobStatus) {
+    try {
+      // Prefer presigned URL if provided (no headers needed)
+      if (job.download_url) {
+        triggerDownload(job.download_url);
+        return;
+      }
+      // Otherwise hit API endpoint with x-api-key header
+      await downloadZipViaApi(job.job_id);
+    } catch (err: any) {
+      openModal("Download failed", err?.message || "Failed to download results.");
+    }
   }
 
   // --------------------------
@@ -1557,23 +1685,33 @@ function App() {
     [checkedJobs]
   );
 
-  function downloadMany(jobs: JobStatus[], cap = DOWNLOAD_CAP) {
+  async function downloadMany(jobs: JobStatus[], cap = DOWNLOAD_CAP) {
     const succeeded = jobs.filter((j) => normalizeStatus(j.status) === "SUCCEEDED");
     if (succeeded.length === 0) {
-      openModal("No downloadable jobs selected", "Only jobs with status SUCCEEDED can be downloaded.");
+      openModal(
+        "No downloadable jobs selected",
+        "Only jobs with status SUCCEEDED can be downloaded."
+      );
       return;
     }
 
     const batch = succeeded.slice(0, cap);
+
     for (const job of batch) {
-      const url = job.download_url || `${API_BASE}/results/${job.job_id}/zip`;
-      triggerDownload(url);
+      if (job.download_url) {
+        triggerDownload(job.download_url);
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        await downloadZipViaApi(job.job_id);
+      }
     }
 
     if (succeeded.length > cap) {
       openModal(
         "Downloads started",
-        `Opened ${cap} downloads.\n\n${succeeded.length - cap} more were not opened to avoid browser blocking.`
+        `Opened ${cap} downloads.\n\n${
+          succeeded.length - cap
+        } more were not opened to avoid browser blocking.`
       );
     }
   }
@@ -1883,7 +2021,9 @@ function App() {
 
   async function pollIds(ids: string[]) {
     if (ids.length === 0) return;
-    const results = await Promise.allSettled(ids.map((id) => fetchJobStatus(id)));
+    const results = await Promise.allSettled(
+      ids.map((id) => fetchJobStatus(id, apiKey))
+    );
     for (const r of results) {
       if (r.status !== "fulfilled") continue;
       const job = r.value;
@@ -1919,7 +2059,7 @@ function App() {
         priorityTimerRef.current = null;
       }
     };
-  }, [priorityIdsKey]);
+  }, [priorityIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (rrTimerRef.current) {
@@ -1962,7 +2102,7 @@ function App() {
         rrTimerRef.current = null;
       }
     };
-  }, [rrPoolKey]);
+  }, [rrPoolKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // jump-to-selected UX
   const selectedIndexInFiltered = useMemo(() => {
@@ -1978,13 +2118,18 @@ function App() {
   const selectedIsOnThisPage = useMemo(() => {
     if (selectedIndexInFiltered < 0) return false;
     const start = safePageIndex * PAGE_SIZE;
-    return selectedIndexInFiltered >= start && selectedIndexInFiltered < start + PAGE_SIZE;
+    return (
+      selectedIndexInFiltered >= start &&
+      selectedIndexInFiltered < start + PAGE_SIZE
+    );
   }, [selectedIndexInFiltered, safePageIndex]);
 
   useEffect(() => {
     if (!selectedJobId) return;
     if (!selectedIsOnThisPage) return;
-    const el = document.querySelector(`[data-rowid="${CSS.escape(selectedJobId)}"]`) as HTMLElement | null;
+    const el = document.querySelector(
+      `[data-rowid="${CSS.escape(selectedJobId)}"]`
+    ) as HTMLElement | null;
     if (!el) return;
     setTimeout(() => {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1999,7 +2144,9 @@ function App() {
   }, [pageRowIds, checkedIds]);
 
   const someOnPageChecked = useMemo(() => {
-    return pageRowIds.some((id) => checkedIds.has(id)) && !allOnPageChecked;
+    return (
+      pageRowIds.some((id) => checkedIds.has(id)) && !allOnPageChecked
+    );
   }, [pageRowIds, checkedIds, allOnPageChecked]);
 
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
@@ -2106,7 +2253,10 @@ function App() {
               1. Submit a new job
             </h2>
 
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: 14 }}
+            >
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>
@@ -2114,7 +2264,10 @@ function App() {
                   </label>
                   <InfoIcon
                     onOpen={() =>
-                      openModal("Job name", "Required. This is the human-friendly label shown to identify your run.")
+                      openModal(
+                        "Job name",
+                        "Required. This is the human-friendly label shown to identify your run."
+                      )
                     }
                     title="Job name info"
                     hoverText="Human-friendly label for this run."
@@ -2151,7 +2304,9 @@ function App() {
                   placeholder="Example: “Demonstrates multi-file inputs and rejected records.”"
                   value={jobDescription}
                   maxLength={JOB_DESC_MAX}
-                  onChange={(e) => setJobDescription(e.target.value.slice(0, JOB_DESC_MAX))}
+                  onChange={(e) =>
+                    setJobDescription(e.target.value.slice(0, JOB_DESC_MAX))
+                  }
                 />
                 <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
                   {jobDescription.length}/{JOB_DESC_MAX}
@@ -2186,7 +2341,9 @@ function App() {
                   ))}
                 </select>
 
-                {selectedSampleHint && <p style={{ ...helperStyle, marginTop: 6 }}>{selectedSampleHint}</p>}
+                {selectedSampleHint && (
+                  <p style={{ ...helperStyle, marginTop: 6 }}>{selectedSampleHint}</p>
+                )}
 
                 <div
                   style={{
@@ -2277,7 +2434,11 @@ function App() {
                   </TipWrap>
                 </div>
 
-                {localFileName && <p style={{ ...helperStyle, marginTop: 6 }}>Selected: {localFileName}</p>}
+                {localFileName && (
+                  <p style={{ ...helperStyle, marginTop: 6 }}>
+                    Selected: {localFileName}
+                  </p>
+                )}
 
                 {localFileName && !hasLiveFile && (
                   <p style={{ ...helperStyle, marginTop: 4, color: "#94a3b8" }}>
@@ -2357,7 +2518,11 @@ function App() {
                       style={{
                         ...selectStyle,
                         ...(useCustomOutdir && !DEMO_LOCK_CUSTOM_S3
-                          ? { cursor: "not-allowed", background: "#f8fafc", color: "#64748b" }
+                          ? {
+                              cursor: "not-allowed",
+                              background: "#f8fafc",
+                              color: "#64748b",
+                            }
                           : null),
                       }}
                       value={outdirChoice}
@@ -2580,11 +2745,45 @@ function App() {
                 ) : null}
               </div>
 
-              <div style={{ marginTop: 6 }}>
-                <TipWrap
-                  text={
-                    submitEnabled
-                      ? "Submit a new job"
+              {/* ✅ API key field (x-api-key) */}
+                <div>
+                    <div style={labelRowStyle}>
+                        <label style={labelStyle}>
+                            API key <span style={{color: "#b91c1c"}}>*</span>
+                        </label>
+                        <InfoIcon
+                            onOpen={() =>
+                                openModal(
+                                    "API key",
+                                    [
+                                        "Enter your access key to use this site.",
+                                        "",
+                                        "Keep this key private. Do not share it in screenshots.",
+                                        "",
+                                        "Your key is saved only in this browser tab and is cleared when you close the tab.",
+                                    ].join("\n")
+                                )
+                            }
+                            title="API key info"
+                            hoverText="Required to use this site."
+                        />
+                    </div>
+
+                    <input
+                        type="password"
+                        style={inputStyle}
+                        placeholder="x-api-key value…"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        autoComplete="off"
+                    />
+                </div>
+
+                <div style={{marginTop: 6}}>
+                    <TipWrap
+                        text={
+                            submitEnabled
+                                ? "Submit a new job"
                       : !jobName.trim()
                       ? "Enter a job name to submit."
                       : "Submitting…"
@@ -2605,8 +2804,16 @@ function App() {
                   </button>
                 </TipWrap>
 
-                {submitError && <p style={{ marginTop: 6, fontSize: "11px", color: "#b91c1c" }}>{submitError}</p>}
-                {submitInfo && <p style={{ marginTop: 6, fontSize: "11px", color: "#166534" }}>{submitInfo}</p>}
+                {submitError && (
+                  <p style={{ marginTop: 6, fontSize: "11px", color: "#b91c1c" }}>
+                    {submitError}
+                  </p>
+                )}
+                {submitInfo && (
+                  <p style={{ marginTop: 6, fontSize: "11px", color: "#166534" }}>
+                    {submitInfo}
+                  </p>
+                )}
               </div>
             </form>
 
@@ -2868,7 +3075,7 @@ function App() {
                       opacity: canDownloadHighlighted ? 1 : 0.5,
                       cursor: canDownloadHighlighted ? "pointer" : "not-allowed",
                     }}
-                    onClick={() => currentJob && handleDownload(currentJob)}
+                    onClick={() => currentJob && void handleDownload(currentJob)}
                     disabled={!canDownloadHighlighted}
                     aria-label="Download highlighted job"
                   >
@@ -3012,13 +3219,17 @@ function App() {
                     >
                       <button
                         type="button"
-                        onClick={() => downloadMany(checkedJobs)}
+                        onClick={() => void downloadMany(checkedJobs)}
                         disabled={downloadableCount === 0}
-                        style={{
+                       style={{
                           ...smallPillButton,
-                          borderColor: downloadableCount > 0 ? "#a7f3d0" : "#e2e8f0",
-                          background: downloadableCount > 0 ? "#ecfdf5" : "#ffffff",
-                          color: downloadableCount > 0 ? "#047857" : "#94a3b8",
+
+                          // mirror Delete Selected behavior:
+                          borderColor: downloadableCount > 0 ? "#bbf7d0" : "#86efac",
+                          background: downloadableCount > 0 ? "#ecfdf5" : "#dcfce7",
+                          color: downloadableCount > 0 ? "#166534" : "#166534",
+
+                          opacity: downloadableCount > 0 ? 1 : 0.5,
                           cursor: downloadableCount > 0 ? "pointer" : "not-allowed",
                           fontWeight: 900,
                         }}
