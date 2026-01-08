@@ -180,13 +180,9 @@ API key required for `POST /submit`. Contact: [achandrasek6@gmail.com](mailto:ac
 * Compute is executed by **Nextflow on AWS Batch**, with container images in **ECR** and artifacts in **S3**; job state is tracked in **DynamoDB**
 
 <details>
-<summary><strong>Inputs / outputs (examples)</strong></summary>
+<summary><strong>Inputs / outputs (example)</strong></summary>
 
-TODO: add a short example showing:
-
-* submitting one or more FASTA files (multi-FASTA supported)
-* polling `GET /status/{job_id}` until complete
-* downloading `GET /results/{job_id}/zip`
+<img width="1565" height="943" alt="covid-website-annotated" src="https://github.com/user-attachments/assets/6ec0347d-59cb-4822-8b5f-634583551a15" />
 
 </details>
 
