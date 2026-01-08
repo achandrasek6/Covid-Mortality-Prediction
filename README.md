@@ -1,17 +1,264 @@
-# SARS-CoV-2 Case-Fatality Rate (CFR) Prediction Pipeline
+# SARS-CoV-2 CFR Prediction Platform (Genomes → Risk Scores)
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Nextflow](https://img.shields.io/badge/Nextflow-DSL2-orange)
 ![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20Fargate-lightgrey)
-[![Build & Push](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push.yml)
-[![Build & Push (API)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
+[![Deploy UI](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml)
+[![Deploy API](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
+[![Build NF Runner](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml)
 
-A production-ready, reproducible pipeline for predicting COVID-19 variant-specific case fatality rates. Built with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**.
+**Live demo:** https://www.covid-cfr-predictor.com/ *(API key required — email achandrasek6@gmail.com for access)*
 
-**Status: v1.1 (Sep 2025) — Core pipeline shipped: Nextflow DSL2 + AWS Batch distributed scoring, interpretable Lasso baseline, robustness & explainability, and a FastAPI microservice on ECS Fargate (ALB). DNABERT trained (standalone); NF/GPU integration next.**
+A cloud-native, reproducible system that predicts **variant-specific COVID-19 case-fatality rates (CFR)** from viral genomes. It includes (1) a **public demo UI** for end-to-end CFR prediction from genome sequences and (2) a **low-latency FastAPI “calculator” service** that returns an overall CFR prediction plus **per-mutation delta contributions** from mutation JSON inputs. Both services submit work to a shared compute plane orchestrated with **Nextflow DSL2** and executed in containers on **AWS Batch** (with images published to **ECR**).
+
+**Availability**
+- **Demo UI:** public domain via CloudFront/Route 53 → API Gateway → Lambda (API key required)
+- **Calculator API:** FastAPI on ECS Fargate behind an internet-facing ALB, restricted to an allowlisted IP (dev-only)
+
+**Status: v2.0 (Jan 7, 2026) — Public UI demo shipped; DNABERT GPU integration planned; RAG-powered natural-language interface for the calculator planned.**
 
 ---
+
+## 🧭 Architecture Overview
+
+The platform has two entrypoints (UI demo + FastAPI calculator) that share a common compute plane (**Nextflow on AWS Batch**) and shared storage/metadata.
+
+### Service A — Public Demo UI (API-key gated submit, async jobs)
+- **Route 53 domain → CloudFront → React/Vite UI**
+- UI calls a **REST API Gateway**:
+  - `POST /submit` *(API key required)*: creates a DynamoDB job record and submits the **top-level Nextflow runner** as an **AWS Batch job** (stores `batch_job_id`)
+  - `GET /status/{job_id}`: reads **DynamoDB** (source of truth) and returns status plus result links (presigned URLs for `predictions.csv` / `failures.csv`)
+  - `GET /results/{job_id}/zip`: streams all S3 artifacts under the job `outdir` into an in-memory ZIP and returns it as a base64 response for browser download
+- **AWS Batch job state change events → EventBridge → `covid-cfr-event-handler` Lambda**, which updates the DynamoDB status for the matching `batch_job_id`.
+- Nextflow executes containerized stages on **AWS Batch** using images in **ECR** and writes artifacts to **S3**.
+
+```mermaid
+flowchart LR;
+  U[User] --> R53[Route 53] --> CF[CloudFront] --> UI[React/Vite UI];
+
+  UI --> APIGW[API Gateway REST];
+  APIGW --> LSUB[Lambda submit];
+  APIGW --> LSTAT[Lambda status];
+  APIGW --> LZIP[Lambda download];
+
+  LSUB --> DDB[(DynamoDB)];
+  LSTAT <--> DDB;
+
+  LSUB --> BATCH[AWS Batch];
+  BATCH --> NF[Nextflow runner];
+  BATCH --> S3[(S3 artifacts)];
+  BATCH --> EB[EventBridge];
+  EB --> LEVT[Lambda event handler];
+  LEVT --> DDB;
+
+  LZIP --> S3;
+```
+
+<details> <summary><strong>Detailed request flow (submit → status polling → download)</strong></summary>
+
+```mermaid
+flowchart LR;
+  U[User];
+  R53[Route 53];
+  CF[CloudFront];
+  UI[React/Vite UI];
+  APIGW[API Gateway REST];
+
+  LSUB[Lambda submit-cfr-job];
+  LSTAT[Lambda covid-cfr-get-status];
+  LZIP[Lambda covid-cfr-download-zip];
+  LEVT[Lambda covid-cfr-event-handler];
+
+  DDB[(DynamoDB job table)];
+  BATCH[AWS Batch];
+  NF[Nextflow runner];
+  ECR[ECR images];
+  S3[(S3 artifacts)];
+  EB[EventBridge Batch events];
+
+  U --> R53;
+  R53 --> CF;
+  CF --> UI;
+
+  %% Submit endpoint (create job + launch compute)
+  UI -->|POST /submit API key| APIGW;
+  APIGW --> LSUB;
+  LSUB -->|create job record| DDB;
+  DDB -->|job_id + initial status| LSUB;
+  LSUB -->|submit NF runner job| BATCH;
+  LSUB -->|submit response job_id| APIGW;
+  APIGW -->|job_id| UI;
+
+  %% Compute plane
+  BATCH --> NF;
+  NF --> BATCH;
+  BATCH --> ECR;
+  BATCH --> S3;
+
+  %% Batch events update Dynamo status
+  BATCH --> EB;
+  EB --> LEVT;
+  LEVT -->|update job status| DDB;
+
+  %% Status endpoint (polling)
+  UI -->|poll GET /status job_id| APIGW;
+  APIGW --> LSTAT;
+  LSTAT -->|query job record| DDB;
+  DDB -->|job status + metadata| LSTAT;
+  LSTAT -->|status JSON| APIGW;
+  APIGW -->|status JSON| UI;
+
+  %% Download results ZIP (served by Lambda)
+  UI -->|GET /results job_id zip| APIGW;
+  APIGW --> LZIP;
+  LZIP -->|list and get objects| S3;
+  LZIP -->|zip bytes| APIGW;
+  APIGW -->|zip download| UI;
+```
+
+</details>
+
+### Service B — FastAPI Calculator (private, low-latency)
+
+A FastAPI service for interactive “what-if” analysis. Given a mutation JSON payload, it returns:
+- an **overall CFR prediction**
+- **per-mutation delta contributions** (per genomic index / feature), showing how each mutation shifts the prediction
+
+**Endpoint**
+- `POST /predict` — computes CFR and a per-feature delta breakdown for the provided mutation set.
+- `GET /features` — lists the Lasso feature set (mutation-derived feature names)
+- `GET /health` — health check (used for monitoring / load balancer checks)
+
+**Deployment / access**
+- **ALB (internet-facing) → ECS Fargate (FastAPI)**
+- Currently **restricted to an allowlisted IP** (dev-only); endpoint is not published
+
+```mermaid
+flowchart LR;
+  C[Client];
+  ALB[ALB];
+  ECS[ECS Fargate FastAPI];
+  ART[(Model artifacts)];
+  RESP[JSON response];
+
+  C -->|POST /predict| ALB;
+  ALB --> ECS;
+
+  ECS -->|load model + scaler| ART;
+  ART --> ECS;
+
+  ECS -->|CFR + per-mutation deltas| RESP;
+  RESP --> C;
+```
+
+---
+
+## 🧩 Services
+
+This repo ships two user-facing services that share the same model artifacts and AWS compute plane (Nextflow on AWS Batch).
+
+### Service A — Public Demo UI (async genome scoring)
+
+Live demo: [https://www.covid-cfr-predictor.com/](https://www.covid-cfr-predictor.com/)
+API key required for `POST /submit`. Contact: [achandrasek6@gmail.com](mailto:achandrasek6@gmail.com)
+
+**What it does**
+
+* Accepts **one or more FASTA files**.
+* Each FASTA file may contain **one genome or many genomes** (multi-FASTA is supported).
+* Returns **per-genome CFR predictions** plus downloadable artifacts (CSV + logs/aux outputs).
+
+**API (REST)**
+
+* `POST /submit` *(API key required)* — submits one or more FASTA inputs (files may be multi-FASTA); returns `job_id`
+* `GET /status/{job_id}` — polls job status and returns per-sample result links (presigned URLs)
+* `GET /results/{job_id}/zip` — downloads a ZIP of all output artifacts for the job
+
+**Execution model**
+
+* Asynchronous job flow: submit → poll status → download results ZIP
+* Compute is executed by **Nextflow on AWS Batch**, with container images in **ECR** and artifacts in **S3**; job state is tracked in **DynamoDB**
+
+<details>
+<summary><strong>Inputs / outputs (examples)</strong></summary>
+
+TODO: add a short example showing:
+
+* submitting one or more FASTA files (multi-FASTA supported)
+* polling `GET /status/{job_id}` until complete
+* downloading `GET /results/{job_id}/zip`
+
+</details>
+
+### Service B — FastAPI Calculator (private, low-latency)
+
+A FastAPI service for interactive “what-if” analysis on mutation sets. Deployed, but currently **not public** (ALB is internet-facing and IP allowlisted).
+
+**Endpoints**
+
+* `POST /predict` — returns an overall CFR prediction plus per-mutation delta contributions from a mutation JSON payload
+* `GET /features` — lists the mutation-derived feature set used by the Lasso model
+* `GET /health` — service health check (used for monitoring / load balancer checks)
+
+**Execution model**
+
+* Low-latency inference for small inputs
+* Shares the same model artifacts; heavier workflows can be delegated to Nextflow/AWS Batch when needed
+
+<details>
+<summary><strong>Inputs / outputs (example)</strong></summary>
+
+**Example request payloads**
+
+```bash
+cat > /tmp/example.json <<'JSON'
+{
+  "sample_id": "example",
+  "features": {
+    "S_3527": 1,
+    "S_645": 1,
+    "ORF1ab_2428": 1,
+    "S_1451": 1,
+    "S_571": 1,
+    "S_53": 1,
+    "ORF1ab_469": 1,
+    "ORF1ab_11809": 1
+  }
+}
+JSON
+```
+
+**Call `/predict`**
+
+```bash
+curl -sS -X POST $BASE/predict \
+  -H 'Content-Type: application/json' \
+  --data-binary @/tmp/example.json | jq .
+```
+
+**Example response**
+
+```json
+{
+  "sample_id": "example",
+  "cfr_pred": 0.04987867788348602,
+  "cfr_pred_pct": "4.99%",
+  "model": "Lasso",
+  "version": "v1",
+  "top_features": [
+    {
+      "feature": "ORF1ab_11809",
+      "coef": 0.0002988483282241131,
+      "contribution": 0.006047544671233004
+    }
+  ],
+  "feature_file_sha": "3558a4265054"
+}
+
+```
+
+</details>
+
 
 ## 📖 Documentation
 
@@ -35,17 +282,16 @@ Use these quick links to jump around this README:
 
 ---
 
-# 🔬 Results at a Glance
+## 🧪 Model Development & Validation
 
-**What I built.** A production-ready pipeline that predicts **variant-specific COVID-19 CFR from viral genomes**, orchestrated with **Nextflow DSL2**, containerized with **Docker**, and deployable on **AWS Batch/ECS**. A fine‑tuned **DNABERT** model (transformer on 6‑mer tokens) is trained as a higher‑capacity head; Nextflow integration is planned as an optional GPU stage.
+This project predicts **variant-specific COVID-19 case-fatality rates (CFR)** from viral genome sequences. The current shipped model is an interpretable **Lasso regression** baseline trained on mutation-derived features. Jobs run in a reproducible compute plane orchestrated with **Nextflow DSL2**, containerized with **Docker**, and executed on **AWS Batch**. A fine-tuned **DNABERT** transformer (6-mer tokenization) is trained as a higher-capacity alternative; optional GPU integration via Nextflow is planned.
 
 **Accuracy (held-out test, Lasso).** **R² = 0.831**, **RMSE ≈ 0.00194**, **MAE ≈ 0.00050**, **Spearman = 0.804**.
 
-**Why it matters.**
-
-* **Actionable surveillance:** turns raw genomes into **risk scores** for variants—useful for triage, early warning, and prioritizing wet-lab follow-ups.
-* **Interpretable by design:** sparse Lasso highlights a compact set of mutation features, so results are explainable to scientists and decision-makers.
-* **Built to scale/reproduce:** Nextflow + Docker + AWS mean the same pipeline runs locally and in the cloud with pinned dependencies and clean provenance.
+**Why it matters**
+- **Actionable surveillance:** turns genomes into **variant-level CFR risk scores** for triage, early warning, and prioritizing wet-lab follow-ups.
+- **Interpretable by design:** sparse Lasso highlights a compact set of mutation features, enabling mutation-level explanations.
+- **Built to scale and reproduce:** Nextflow + Docker + AWS enable consistent runs across environments with pinned dependencies and provenance.
 
 **From metrics to mechanism:** where the signal lives in the genome:
 
@@ -53,26 +299,37 @@ Use these quick links to jump around this README:
      alt="Per-variant fraction of samples with each mutation-derived feature. Columns are grouped by genomic region (ORF1ab, Spike, Other) with a colored header strip; rows are variants (Alpha–Omicron). WildType excluded."
      width="95%" />
 
-<p style="max-width:900px; margin: 0.75rem auto 0; font-size: 0.95em; line-height:1.45;">
-This heatmap shows the fraction of genomes within each lineage carrying each mutation-derived feature. Columns are grouped and ordered by genomic position—left→right: <strong>ORF1ab (replicase)</strong>, <strong>Spike (S)</strong>, then <strong>Other</strong> (N/M/E + accessory); within each region, features also follow genomic order. The visually higher mutation density in Spike likely reflects (i) <em>positive selection</em> for host-entry and immune-escape changes (RBD, NTD “antigenic supersite,” S1/S2 cleavage), (ii) <em>surveillance bias</em>—Spike-focused reporting and curation make S changes more consistently captured, and (iii) <em>tolerance</em>—replication enzymes in ORF1ab are more constrained, so fewer substitutions persist there. Note that “prevalence” here indicates how common a feature is within a variant, not its effect size; downstream ablations/SHAP quantify influence. <em>WildType excluded.</em>
-</p>
+<details>
+<summary><strong>How to read this heatmap (and why Spike looks denser)</strong></summary>
+
+<br/>
+
+This heatmap shows the fraction of genomes within each lineage carrying each mutation-derived feature. Columns are grouped and ordered by genomic position—left→right: **ORF1ab (replicase)**, **Spike (S)**, then **Other** (N/M/E + accessory); within each region, features also follow genomic order.
+
+The higher mutation density in Spike likely reflects (i) *positive selection* for host-entry and immune-escape changes (RBD, NTD “antigenic supersite,” S1/S2 cleavage), (ii) *surveillance bias* (Spike-focused reporting/curation), and (iii) *constraint* (replication enzymes in ORF1ab are more constrained, so fewer substitutions persist).
+
+“Prevalence” here indicates how common a feature is within a variant, not its effect size; downstream ablations/SHAP quantify influence. *WildType excluded.*
+
+</details>
 
 
----
-
-## 📈 Key Figures
 
 
 
-### Lasso Model 
+### 📈 Key Figures
+
+
+
+<details>
+<summary><strong>🧱 Lasso: validation + robustness (bootstrap, controls, ablations)</strong></summary>
+
+
 
 #### 1) Overall Performance (stability across resamples)
 
 The model’s R² value falls within the 95% bootstrapped confidence interval, indicating that its performance is representative of the underlying distribution rather than a single favorable data split.
 
 ![Bootstrap Test R² Distribution](figures/bootstrap_r2_histogram.png)
-
-
 
 #### 2) Robustness Checks (controls)
 
@@ -83,15 +340,20 @@ Both controls show the model isn’t learning artifacts.
 | <img src="https://github.com/user-attachments/assets/b8fe9a63-c2c9-46c4-aacc-2ff920dbe9b5" alt="Label permutation R² distribution (Lasso baseline)" width="100%"/> | <img src="https://github.com/user-attachments/assets/b91799ee-f531-47d6-98ee-f9bf544c06c9" alt="Feature shuffle R² distribution (Lasso baseline)" width="100%"/> |
 | <sub>Shuffle **labels**: breaks the signal; R² histogram is centered **well below 0**, confirming the model isn’t fitting noise.</sub> | <sub>Shuffle **features** in training only: destroys feature structure; test R² **collapses**, showing real dependence on true features.</sub> |
 
-
-
 #### 3) What Genes Matter (group ablations)
 
 Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −0.033**), validating the coefficient ranking. Dropping **Spike (`^S_`)** features (**ΔR² ≈ −0.025**) and **ORF1ab** (**ΔR² ≈ −0.019**) also harms performance—evidence these genes carry real signal.
 
 <img width="1579" height="580" alt="ablations_delta_r2" src="https://github.com/user-attachments/assets/00d77aed-93b2-4e8e-89d3-7969d9b24ad6" />
 
-<h4>4) Model Explainability (SHAP/LIME, Lasso baseline)</h4>
+</details>
+
+<details>
+<summary><strong>🔍 Lasso: explainability (SHAP + LIME examples)</strong></summary>
+
+
+
+#### 1) SHAP case studies (model-level explanations)
 
 <table>
   <tr>
@@ -112,9 +374,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
   </tr>
 </table>
 
-
-
-#### C) LIME case studies (per-sample explanations)
+#### 2) LIME case studies (per-sample explanations)
 
 | **A. High-error case studies** | **B. Per-sample waterfall (MZ314997.2)** |
 | --- | --- |
@@ -129,7 +389,14 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 - Beeswarm directionality highlights which alleles **raise vs. lower** predicted CFR, guiding biological follow-up.  
 - LIME helps **audit individual genomes** (especially large-error cases) to ensure the model’s rationale is sensible.
 
-### Language model (DNABERT) — quick summary
+</details>
+
+<details>
+<summary><strong>🧬 DNABERT: deep model summary (artifacts + trade-offs)</strong></summary>
+
+
+
+#### Language model (DNABERT) — quick summary
 
 * Fine-tuned transformer achieved **RMSE = 0.0046**, about **15% lower error** than Lasso in my study, while capturing **long-range sequence context**. **Recommended when maximum accuracy is needed.**
 * Useful when you want maximum accuracy and are OK with GPU/latency trade-offs; Lasso remains the fast, interpretable default.
@@ -140,7 +407,9 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 | **Lasso (baseline)** | Interpretable coefficients; small, fast; easy to explain | May miss non-linear/long-range effects | Routine surveillance, explainability, bulk scoring                    |
 | **DNABERT (deep)**   | Captures context; headroom for accuracy                  | GPU needed; slower; less transparent   | High-stakes analyses, research scenarios where extra accuracy matters |
 
-## ⚡ TL;DR
+</details>
+
+### ⚡ TL;DR
 
 **Accurate (R² \~0.83), interpretable, and production-ready** genomic risk prediction.
 Deep-learning headroom (DNABERT trained) is available; the shipped Lasso baseline already gives strong accuracy with transparent mutation-level insights and real robustness evidence.
@@ -155,6 +424,8 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 </details>
 
 ---
+
+
 ## 📌 Features
 - **End-to-end workflow**: Fetch genomes → align (MAFFT) → build mutation features → train ML models → explain results.
 - **Classical ML**: L1-regularized Lasso regression for interpretable, sparse mutation features.
