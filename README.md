@@ -281,22 +281,48 @@ curl -sS -X POST $BASE/predict \
 
 ---
 
+## 🚀 Quickstart Demo (UI)
+
+1) Open the live demo: https://www.covid-cfr-predictor.com/  
+   Request an API key at **achandrasek6@gmail.com** (required for `POST /submit`).
+
+2) Choose an input mode in the UI:
+   - **Quick demo** (preconfigured tiny dataset), or
+   - **Single file demo** (preconfigured small dataset), or
+   - **Multi-file demo** (multiple files; each file may contain one or many genomes)
+
+3) Click **Submit** to start a job. The UI will display a `job_id`.
+
+4) Wait for completion while the UI polls job status (`GET /status/{job_id}`).
+   - Status is sourced from **DynamoDB** and updated via **AWS Batch events**.
+
+5) Download results:
+   - Use the UI’s download action (or call `GET /results/{job_id}/zip`) to fetch a ZIP of all job artifacts.
+   - For per-sample CSVs, `GET /status/{job_id}` also returns presigned links when `predictions.csv` / `failures.csv` are available.
+
+
 ## 🔐 Access & Security
 
 **🌐 Demo UI (Service A)**
-- The UI is publicly reachable at https://www.covid-cfr-predictor.com/.
-- The backend REST API enforces an **API key on `POST /submit`** to control usage and costs.
-- **Custom file upload is disabled** in the public demo to prevent unintended use/abuse; the UI is intended for controlled/demo inputs.
-- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) are not API-key gated and return only job-scoped artifacts.
+- Publicly reachable at https://www.covid-cfr-predictor.com/.
+- Backend enforces an **API key on `POST /submit`** to control usage and costs (request access via **achandrasek6@gmail.com**).
+- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) do not require an API key.
 
 **🧮 Calculator API (Service B)**
-- The FastAPI service is deployed behind an internet-facing ALB but is currently **restricted to an allowlisted IP** (dev-only).
-- The endpoint is not published; access can be granted on request.
+- Deployed behind an internet-facing ALB but currently **restricted to an allowlisted IP** (dev-only).
+- Endpoint is not published; access can be granted on request.
 
-**Operational guardrails**
-- **DynamoDB is the status source of truth**; **AWS Batch events** update job state.
-- Result access is **job-scoped**: status returns **presigned artifact links**; `/zip` returns a **job output bundle**.
-- No secrets or live endpoints are committed; request demo access via **achandrasek6@gmail.com**.
+**Hygiene**
+- No secrets or live internal endpoints are committed to the repo.
+
+---
+
+## ⚠️ Limitations / Guardrails
+
+- **Controlled demo inputs:** custom uploads are disabled in the public UI to prevent unintended use/abuse.
+- **Async execution:** jobs run via Nextflow on AWS Batch; queue/run time can vary. The UI polls `GET /status/{job_id}` until completion.
+- **Job-scoped outputs:** results are isolated per `job_id`. Status returns presigned artifact links when available; `/results/{job_id}/zip` returns a ZIP of the job’s S3 outputs.
+- **Feature space constraints:** predictions and per-mutation deltas are defined over the mutation-derived Lasso feature set (see `GET /features`).
 
 ---
 
@@ -587,5 +613,11 @@ Full-res PDF: <a href="cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf">
 
 ---
 
+## 📚 Citation
+
+If you use this repository or build on it, please cite the project metadata in [`CITATION.cff`](CITATION.cff).
+
+---
+
 ## 📜 License
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0.
