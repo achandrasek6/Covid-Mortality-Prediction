@@ -17,6 +17,30 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 
 **Status: v2.0 (Jan 7, 2026) — Public UI demo shipped; DNABERT GPU integration planned; RAG-powered natural-language interface for the calculator planned.**
 
+**Bonus:** includes a COVID-19 patient transcriptomics analysis (DGE + pathway insights) at the end of this README.
+
+---
+
+## 📖 Table of Contents
+
+Use these quick links to jump around this README:
+
+- [🔬 Results at a Glance](#-results-at-a-glance)
+- [📈 Key Figures](#-key-figures)
+- [⚡ TL;DR](#-tldr)
+- [📌 Features](#-features)
+- [🗂️ Repository Layout](#️-repository-layout)
+- [🚀 Local Quickstart](#-local-quickstart)
+- [🧩 API quickstart (Fargate)](#-api-quickstart-fargate)
+- [🧬 Workflow Overview](#-workflow-overview)
+- [⚙️ Productionization](#️-productionization)
+- [💻 CLI by Stage](#-cli-by-stage)
+- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
+- [📊 Outputs](#-outputs)
+- [📌 Roadmap](#-roadmap)
+- [🧰 Troubleshooting](#-troubleshooting)
+- [📜 License](#-license)
+
 ---
 
 ## 🧭 Architecture Overview
@@ -303,27 +327,31 @@ You can access results via:
 
 ---
 
-## 📖 Documentation
+## 🗺️ Roadmap / Changelog
 
-Use these quick links to jump around this README:
+### ✅ v2 — Jan 7, 2026
+- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
+- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
+- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
+- Added **download flows**:
+  - `GET /status/{job_id}` returns presigned artifact links
+  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
+- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
+  - `POST /predict` (CFR + per-mutation delta contributions)
+  - `GET /features`, `GET /health`
 
-- [🔬 Results at a Glance](#-results-at-a-glance)
-- [📈 Key Figures](#-key-figures)
-- [⚡ TL;DR](#-tldr)
-- [📌 Features](#-features)
-- [🗂️ Repository Layout](#️-repository-layout)
-- [🚀 Local Quickstart](#-local-quickstart)
-- [🧩 API quickstart (Fargate)](#-api-quickstart-fargate)
-- [🧬 Workflow Overview](#-workflow-overview)
-- [⚙️ Productionization](#️-productionization)
-- [💻 CLI by Stage](#-cli-by-stage)
-- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
-- [📊 Outputs](#-outputs)
-- [📌 Roadmap](#-roadmap)
-- [🧰 Troubleshooting](#-troubleshooting)
-- [📜 License](#-license)
+### 🚧 Next (planned)
+- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
+- **RAG-powered natural language interface** for the calculator (ask questions, get grounded answers referencing the model’s feature space)
+- Tighten public demo hardening (rate limiting, origin-restricted CORS, additional abuse prevention)
+
+### 📌 Longer-term ideas
+- Broaden model/version management (artifact versioning + reproducibility metadata)
+- Extended monitoring/reporting for drift and cohort shifts
 
 ---
+
+
 
 ## 🧪 Model Development & Validation
 
@@ -515,333 +543,44 @@ project/
 
 ---
 
-## 🚀 Local Quickstart
+## 🗺️ Roadmap / Changelog
 
-### Environment
-```bash
-conda env create -f environment.yml
-conda activate covid-lasso-pipeline
-# or
-pip install -r requirements.txt
-```
+### ✅ v2 — Jan 7, 2026
+- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
+- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
+- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
+- Added download flows:
+  - `GET /status/{job_id}` returns presigned artifact links
+  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
+- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
+  - `POST /predict` (CFR + per-mutation delta contributions)
+  - `GET /features`, `GET /health`
 
-### Docker Image
-Build a runtime with all dependencies for the Lasso pipeline.
-```bash
-docker build -f Dockerfile.lasso -t covid-lasso:aws-preprocess-fix-20250822-0339 .
-docker run --rm -v "$PWD":/work -w /work covid-lasso:aws-preprocess-fix-20250822-0339 \
-  python scripts/ML_model.py --help
-```
-For end-to-end runs, combine with `main.nf -profile docker` and mount MAFFT/data volumes as needed.
-
-### End-to-end run (Dockerized)
-```bash
-nextflow run main.nf -profile docker \
-  --samples "transformed_data/variant_samples_small.fasta" \
-  --outdir results_nf
-```
->See `nextflow.config` file for full list of arguements.
-### Train & Evaluate Lasso
-```bash
-python scripts/ML_model_CLI_user.py \
-  --train-matrix lasso_training_data/feature_matrix_train.csv \
-  --test-matrix  lasso_training_data/feature_matrix_test.csv \
-  --alpha 0.000174 \
-  --out-dir model_artifacts
-```
-> Run 'extract_features.py' to strip features from training matrix for Nextflow run (see docstring). 
-
-## 🧩 API quickstart (Fargate)
-
-> **Note on URLs (security)**
-> This repo doesn’t publish a live endpoint. The ALB DNS you create in AWS is a **public, unauthenticated entry point**. Posting it in a README invites scraping/abuse, noisy logs, and surprise costs.  
-> Use a placeholder like `https://<YOUR_API_URL>` here, and deploy behind one of these:
-> - **API Gateway → VPC Link → private ALB** (recommended): add API keys/JWT, throttling, custom domain + TLS.
-> - **Public ALB** (testing only): restrict Security Group to your IPs, enable TLS (ACM), require `X-API-Key`, attach WAF.
->
-> When testing locally, substitute your own URL **without** committing it:
-> ```bash
-> export API_BASE="https://<YOUR_API_URL>"
-> curl -H "X-API-Key: $API_KEY" "$API_BASE/health"
-> ```
-
-Replace `<ALB_DNS>` and `<YOUR_API_URL>` with your own when available.
-
-**Predict from inline features**
-```bash
-curl -X POST http://<ALB_DNS>/predict \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "sample_id":"EX123",
-    "features":{"S_1434":1,"ORF1ab_2428":1,"S_645":0}
-  }'
-```
-
-**Presign an S3 PUT (upload)**
-```
-curl -X POST http://<ALB_DNS>/presign \
-  -H 'Content-Type: application/json' \
-  -d '{"key":"uploads/example.fasta","method":"put_object","expires_in":3600}'
-```
-**Queue a batch job**
-```
-curl -X POST http://<ALB_DNS>/submit \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "input_s3":"s3://ach-covid-lasso-us-east-2/inputs/batch/*.fasta",
-    "output_s3":"s3://ach-covid-lasso-us-east-2/results/batch-001/",
-    "params":{"profile":"aws"}
-  }'
-```
-### 🔧 Environment (ECS task)
-
-**Required**
-```
-AWS_REGION=us-east-2
-S3_BUCKET=<your-s3-bucket>                  # e.g., covid-cfr-prod-us-east-2
-SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account-id>/<queue-name>
-```
-
-**Optional**
-```
-REQUIRE_API_KEY=true                        # set true to enforce API key auth
-API_KEY=<strong-secret-value>               # store in Secrets Manager/Task secrets
-MODEL_VERSION=v1
-```
-
----
-
-## 🧬 Workflow Overview
-```mermaid
-flowchart LR
-  A["Fetch genomes"] --> B["Reference genome"]
-  B --> C["MAFFT alignment"]
-  C --> D["Filter by % identity"]
-  D --> E["Binary variant matrix"]
-  E --> F["Lasso regression"]
-  F --> G["Explain (SHAP/LIME)"]
-  D --> H["DNABERT fine-tuning (trained; NF integration pending)"]
-  E --> I["Visualizations"]
-  F --> J["Collapse features"]
-  H --> K["Predictions"]
-  J --> K
-```
-
----
-
-## ⚙️ Productionization
-
-- **CI/CD**: GitHub Actions builds `docker/Dockerfile.lasso` and pushes to ECR (`latest` + `<commit_sha>`).
-- **Batch scoring**: Run large cohorts on AWS Batch.
-- **On-demand inference**: FastAPI microservice on ECS Fargate, exposed via API Gateway (planned).
-- **Data exchange**: Pre-signed S3 URLs for secure input/output (planned).
-- **Async workflows**: SQS for job orchestration (planned).
-- **Observability**: **Amazon CloudWatch** Logs & Metrics with Alarms (job failures, p95 latency, SQS queue depth).
-- **Monitoring**: Drift reports for variant distribution shifts (planned).
-
-### CI/CD: GitHub Actions → Docker → AWS ECR (Shipped)
-
-This repo auto-builds a Docker image and pushes it to **Amazon ECR** on every push to `main`.
-
-- **Workflow:** `.github/workflows/ecr-push.yml`
-- **Dockerfile:** `docker/Dockerfile.lasso`
-- **Registry:** `802861900950.dkr.ecr.us-east-2.amazonaws.com/covid-lasso`
-- **Tags pushed:** `:latest` (convenience) and `:<commit_sha>` (immutable)
-- **Build cache:** an extra `:buildcache` (or `:cache`) tag is used by Buildx for faster builds.
-
-Pull the image:
-```bash
-Registry: <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>
-...
-docker pull <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>:latest
-docker pull <account-id>.dkr.ecr.<region>.amazonaws.com/<repo>:<commit_sha>
-```
-
-### 🛰️ Deployed API (ECS Fargate + ALB) (Shipped)
-Public ALB → FastAPI service on ECS Fargate. Health:
-_Currently private_
-```bash
-curl -H "X-API-Key: $API_KEY" "$API_BASE/health"
-# {"status":"ok","time":...}
-```
-
-### 🔒 Security 
-Endpoints can require an API key (`REQUIRE_API_KEY=true`). S3 access uses presigned URLs scoped to allowed prefixes; SQS messages are JSON-validated server side. CI uses AWS OIDC (no long-lived keys).
-
----
-
-
-
-## 💻 CLI by Stage
-
-### 0) Get the reference & annotations
-Creates `raw_data/NC_045512.2_sequence.fasta` and a gene table.
-```bash
-(cd scripts && python Ref_Seq_Import.py)
-```
-
-### 1) Subsample FASTA for quick iteration (optional)
-Deterministic reservoir subsampling for large datasets.
-```bash
-(cd scripts && python subsample_fasta.py \
-    -i ../transformed_data/variant_samples.fasta \
-    -o ../transformed_data/variant_samples_small.fasta \
-    -k 250 --seed 42)
-```
-
-### 2) Full preprocessing: align → filter → variant matrix
-Performs MAFFT alignment, reorders with reference first, filters by % identity, writes identity report, and builds the binary mutation matrix. Also collects rejected samples into `preprocessed_full/rejected/`.
-```bash
-(cd scripts && python preprocess_all.py \
-    --samples ../transformed_data/variant_samples_small.fasta \
-    --reference-fasta ../raw_data/NC_045512.2_sequence.fasta \
-    --identity-threshold 92 \
-    --out-dir ../preprocessed_full \
-    --mafft-args --thread -1)
-```
-
-### 3) Train & evaluate Lasso
-```bash
-(cd scripts && python ML_model.py \
-    --train-matrix ../lasso_training_data/feature_matrix_train.csv \
-    --test-matrix  ../lasso_training_data/feature_matrix_test.csv \
-    --alpha 0.000174 \
-    --out-dir ../model_artifacts)
-```
-
-### 4) Robustness: negative controls & ablations
-```bash
-(cd scripts && python neg_ctrls_ablations.py \
-    --train_csv ../lasso_training_data/feature_matrix_train.csv \
-    --test_csv  ../lasso_training_data/feature_matrix_test.csv  \
-    --target_col "Global CFR" --id_col SampleID \
-    --outdir ../explanations/controls_out \
-    --use_lassocv --cv_folds 5 \
-    --n_label_perm 200 --n_feat_shuffle 100 \
-    --ablate_regex "^S_" "^ORF1ab_" \
-    --ablate_list ../key_sites.txt \
-    --ablate_topk_coef 50 \
-    --save_preds)
-```
-
-### 5) Model explanations (SHAP & LIME)
-```bash
-(cd scripts && python explain_lasso.py \
-    --train_csv ../lasso_training_data/feature_matrix_train.csv \
-    --test_csv  ../lasso_training_data/feature_matrix_test.csv  \
-    --artifacts_dir ../model_artifacts \
-    --outdir ../explanations \
-    --lime_n 5 --lime_select largest_error --lime_space raw --lime_digits 6)
-```
-
-### 6) Collapse and predict on new genomes
-```bash
-(cd scripts && python collapse_and_predict.py \
-    --variant-matrix ../preprocessed_full/variant_binary_matrix.csv \
-    --aligned-fasta ../preprocessed_full/aligned_filtered.fasta \
-    --reference-id NC_045512.2 \
-    --train-feature-matrix ../lasso_training_data/feature_matrix_train.csv \
-    --model ../model_artifacts/lasso_model.joblib \
-    --scaler ../model_artifacts/scaler.joblib \
-    --out-dir ../collapsed_prediction)
-```
-
-### 7) Visualizations
-```bash
-# Heatmap
-(cd scripts && python Variant_feature_heatmap.py)
-# Regularization curve
-(cd scripts && python Regularization.py)
-```
-
-### 8) DNABERT baseline (trained; NF integration pending)
-Fine-tuned DNABERT regressor has been trained separately; Nextflow module will be added in v1.1.
-
----
-
-## 🧭 Nextflow Entrypoint
-A Nextflow wrapper (`main.nf`) orchestrates the stages above for scalable, parallel execution.
-
-**Typical usage**
-```bash
-# Local execution
-nextflow run main.nf -profile local \
-  --samples "transformed_data/variant_samples_small.fasta" \
-  --outdir results_nf
-
-# Docker execution (per-process containers)
-nextflow run main.nf -profile docker \
-  --samples "transformed_data/variant_samples_small.fasta" \
-  --outdir results_nf
-
-# AWS Batch execution (cloud computing)
-nextflow run main.nf -profile aws \
---samples "s3://<your-bucket>/inputs/test_samples/*.fasta"
---outdir "s3://<your-bucket>/results_test"
-```
-
-See `nextflow.config` for available profiles (e.g., `local`, `docker`), full list of CLI args and tunables like CPUs/memory, container images, and work directory. Override at runtime with `-with-report`, `-with-trace`, `-with-dag flowchart.png`, and resume with `-resume`.
-
----
-
-## 📊 Outputs
-- **Model artifacts (Lasso):** `model_artifacts/lasso_model.joblib`, `model_artifacts/scaler.joblib`
-- **Model artifacts (DNABERT — trained; NF integration pending):**
-  - Weights: `dnabert_cfr_regressor_all_layers_richer_head/` (Keras v3 SavedModel), `model_artifacts/best_model.h5` (HDF5 snapshot)
-  - Tokenizer also `dnabert_cfr_regressor_all_layers_richer_head/` containing:
-    - `tokenizer_config.json` *(BertTokenizer; model_max_length=512; do_lower_case=false)*
-    - `special_tokens_map.json` *([CLS], [SEP], [MASK], [PAD], [UNK])*
-    - `vocab.txt` *(4,101 tokens; 6-mers + specials)*
-- **Explanations:** SHAP plots, LIME HTMLs, feature importance tables
-- **QC reports:** Identity thresholds, rejected sequences
-- **Visualizations:** Variant heatmaps, regularization curves
-- **Predictions:** Collapsed feature matrices + CFR predictions
-
----
-
-## 📌 Roadmap
-
-### ✅ Shipped — v1.1 (Sep 2025)
-- Nextflow DSL2 orchestration
-- Dockerized stages with pinned dependencies
-- **AWS Batch** integration for distributed, chunked scoring
-- **FastAPI microservice on ECS Fargate (ALB)** — `/health`, `/predict` (stub), `/presign` (S3 presigned URLs), `/submit` (enqueue to SQS)
-- CI/CD: GitHub Actions (OIDC) → Docker Buildx → **Amazon ECR** (immutable `:<commit_sha>` + `:latest`)
-- Lasso baseline with bootstrap validation
-- Robustness suite (label permutations, feature shuffles, ablations)
-- Explainability (SHAP, LIME)
+### ✅ v1.1 — Sep 2025
+- Nextflow DSL2 orchestration and dockerized stages with pinned dependencies
+- AWS Batch integration for distributed scoring
+- Interpretable **Lasso** baseline with bootstrap validation, robustness controls, and SHAP/LIME explainability
 - Visualizations & reports (heatmaps, regularization curves)
-- Reproducibility artifacts (models, scalers, run reports)
+- CI/CD: GitHub Actions (OIDC) → Docker Buildx → Amazon ECR (runner + pipeline images)
+- DNABERT trained as a standalone artifact (integration pending)
 
-### 🚧 In Flight — v1.2
-- **API Gateway + auth/rate limits** in front of Fargate (private ALB via VPC Link)
-- MLflow experiment tracking + model registry (design complete)
-- Wire real model artifacts into `/predict` (scaler + Lasso), improve schema validation
-- **Integrate trained DNABERT module into Nextflow** (optional GPU Batch queue)
+### 🚧 Next (planned)
+- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
+- **RAG-powered natural language interface** for the calculator (ask questions grounded in the model’s feature space)
+- Public demo hardening: rate limiting, origin-restricted CORS, additional abuse prevention
+- Calculator API improvements: wire additional artifact/version metadata into responses and tighten schema validation
 
-### 🔮 Planned Enhancements — v2 (optional)
-- **Presigned S3 I/O + SQS**: end-to-end async batch (worker consumer + status)
-- Drift monitoring job & report (feature/label distribution shifts)
-- Streamlit/Gradio dashboard for explanations
-- Multi-omics extension (RNA-seq, host genetics)
+### 📌 Longer-term ideas
+- Artifact/model versioning and reproducibility metadata (e.g., MLflow or equivalent)
+- Drift monitoring/reporting for cohort and feature distribution shifts
+- Optional UI enhancements for explanations (e.g., lightweight dashboard)
+- Multi-omics extensions (host transcriptomics as an additional study/module)
 
----
+### 🔒 Security (high level)
+- The demo API enforces an API key on `POST /submit`; the calculator is restricted to an allowlisted IP (dev-only).
+- S3 access is job-scoped via presigned URLs; CI uses AWS OIDC (no long-lived keys).
 
-## 🧰 Troubleshooting
-- **CloudWatch Logs Insights**: grep structured JSON logs to find failing chunks quickly. Useful starter query:
-```sql
-fields @timestamp, @message
-| filter level = 'ERROR'
-| sort @timestamp desc
-| limit 50
-```
-- **MAFFT not found**: ensure it is installed and on `PATH`.
-- **Path errors**: some scripts assume execution from `scripts/`; either run from there or adjust relative paths.
-- **Nextflow var errors**: confirm `main.nf` input channels match declared parameters; use `-with-dag` to inspect graph.
-- **CSV parsing**: prefer `awk`/`csvkit` for large files; ensure correct delimiters (`,` for CSV, `\t` for TSV).
-- **I/O-bound runs**: consider enabling Fusion S3 streaming or using local ephemeral storage for heavy intermediates.
 
----
 
 ## 📜 License
 Apache-2.0.
