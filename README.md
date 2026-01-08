@@ -30,7 +30,7 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 - [🚀 Quickstart Demo (UI)](#-quickstart-demo-ui)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
 - [🔐 Access & Security](#-access--security)
-- [🚧 Limitations / Guardrails](#️-limitations--guardrails)
+- [🚧 Limitations / Guardrails](#-limitations--guardrails)
 - [📦 Outputs](#-outputs)
 - [🗂️ Repository Layout](#️-repository-layout)
 - [🧪 Model Development & Validation](#-model-development--validation)
