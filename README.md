@@ -23,7 +23,7 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 
 The platform has two entrypoints (UI demo + FastAPI calculator) that share a common compute plane (**Nextflow on AWS Batch**) and shared storage/metadata.
 
-### Service A — Public Demo UI (API-key gated submit, async jobs)
+### 🌐 Service A — Public Demo UI (API-key gated submit, async jobs)
 - **Route 53 domain → CloudFront → React/Vite UI**
 - UI calls a **REST API Gateway**:
   - `POST /submit` *(API key required)*: creates a DynamoDB job record and submits the **top-level Nextflow runner** as an **AWS Batch job** (stores `batch_job_id`)
@@ -118,7 +118,7 @@ flowchart LR;
 
 </details>
 
-### Service B — FastAPI Calculator (private, low-latency)
+### 🧮 Service B — FastAPI Calculator (private, low-latency)
 
 A FastAPI service for interactive “what-if” analysis. Given a mutation JSON payload, it returns:
 - an **overall CFR prediction**
@@ -157,7 +157,7 @@ flowchart LR;
 
 This repo ships two user-facing services that share the same model artifacts and AWS compute plane (Nextflow on AWS Batch).
 
-### Service A — Public Demo UI (async genome scoring)
+### 🌐 Service A — Public Demo UI (async genome scoring)
 
 Live demo: [https://www.covid-cfr-predictor.com/](https://www.covid-cfr-predictor.com/)
 API key required for `POST /submit`. Contact: [achandrasek6@gmail.com](mailto:achandrasek6@gmail.com)
@@ -186,7 +186,7 @@ API key required for `POST /submit`. Contact: [achandrasek6@gmail.com](mailto:ac
 
 </details>
 
-### Service B — FastAPI Calculator (private, low-latency)
+### 🧮 Service B — FastAPI Calculator (private, low-latency)
 
 A FastAPI service for interactive “what-if” analysis on mutation sets. Deployed, but currently **not public** (ALB is internet-facing and IP allowlisted).
 
@@ -255,6 +255,53 @@ curl -sS -X POST $BASE/predict \
 
 </details>
 
+---
+
+## 🔐 Access & Security
+
+**🌐 Demo UI (Service A)**
+- The UI is publicly reachable at https://www.covid-cfr-predictor.com/.
+- The backend REST API enforces an **API key on `POST /submit`** to control usage and costs.
+- **Custom file upload is disabled** in the public demo to prevent unintended use/abuse; the UI is intended for controlled/demo inputs.
+- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) are not API-key gated and return only job-scoped artifacts.
+
+**🧮 Calculator API (Service B)**
+- The FastAPI service is deployed behind an internet-facing ALB but is currently **restricted to an allowlisted IP** (dev-only).
+- The endpoint is not published; access can be granted on request.
+
+**Operational guardrails**
+- **DynamoDB is the status source of truth**; **AWS Batch events** update job state.
+- Result access is **job-scoped**: status returns **presigned artifact links**; `/zip` returns a **job output bundle**.
+- No secrets or live endpoints are committed; request demo access via **achandrasek6@gmail.com**.
+
+---
+
+## 📦 Outputs
+
+### 🌐 Service A (Demo UI / Batch scoring)
+Outputs are written to S3 under the job `outdir` as:
+
+- **Quick demo:** `.../<job_id>/variant_samples_tiny/...`
+- **Single file demo:** `.../<job_id>/variant_samples_small/...`
+- **Multi-file demo:** `.../<job_id>/variant_samples_small/...` and `.../<job_id>/reject_test/...`
+
+You can access results via:
+- `GET /status/{job_id}` — returns presigned links for per-sample artifacts (when available)
+- `GET /results/{job_id}/zip` — downloads a ZIP of all S3 artifacts under the job prefix
+
+**Per-sample artifacts (typical)**
+- `predictions.csv` — per-genome CFR predictions for each sample group (multi-FASTA supported)
+- `failures.csv` — rejected genomes / preprocessing failures (empty or omitted when none)
+
+### 🧮 Service B (FastAPI calculator)
+`POST /predict` returns a JSON response containing:
+- `cfr_pred` (+ formatted string / percent)
+- `top_features[]` — feature coefficients and per-feature delta contributions for the provided mutation set
+- model metadata (`model`, `version`, `feature_file_sha`)
+
+`GET /features` returns the full list of mutation-derived features used by the Lasso model.
+
+---
 
 ## 📖 Documentation
 
@@ -441,6 +488,8 @@ project/
 ├─ .github/                          # GitHub config (Actions workflows, etc.)
 ├─ app/                              # FastAPI service (main.py, requirements.txt)
 ├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
+├─ covid-cfr-ui                      # Frontend UI application
+├─ covid-cfr-ui-infra                # Terraform infrastructure for UI
 ├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
 ├─ docker/                           # NF container build context (Dockerfile.lasso lives here)
 ├─ explanations/                     # SHAP/LIME figures, explanation reports
