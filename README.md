@@ -553,6 +553,7 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 - Added download flows:
   - `GET /status/{job_id}` returns presigned artifact links
   - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
+- Added API-key gating on POST /submit and job-scoped artifact access (presigned URLs / ZIP).
 - Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
   - `POST /predict` (CFR + per-mutation delta contributions)
   - `GET /features`, `GET /health`
@@ -576,10 +577,6 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 - Drift monitoring/reporting for cohort and feature distribution shifts
 - Optional UI enhancements for explanations (e.g., lightweight dashboard)
 - Multi-omics extensions (host transcriptomics as an additional study/module)
-
-### 🔒 Security (high level)
-- The demo API enforces an API key on `POST /submit`; the calculator is restricted to an allowlisted IP (dev-only).
-- S3 access is job-scoped via presigned URLs; CI uses AWS OIDC (no long-lived keys).
 
 ---
 
