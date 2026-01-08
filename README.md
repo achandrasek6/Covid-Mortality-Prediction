@@ -327,30 +327,40 @@ You can access results via:
 
 ---
 
-## 🗺️ Roadmap / Changelog
 
-### ✅ v2 — Jan 7, 2026
-- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
-- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
-- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
-- Added **download flows**:
-  - `GET /status/{job_id}` returns presigned artifact links
-  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
-- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
-  - `POST /predict` (CFR + per-mutation delta contributions)
-  - `GET /features`, `GET /health`
+## 🗂️ Repository Layout
 
-### 🚧 Next (planned)
-- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
-- **RAG-powered natural language interface** for the calculator (ask questions, get grounded answers referencing the model’s feature space)
-- Tighten public demo hardening (rate limiting, origin-restricted CORS, additional abuse prevention)
+```
+project/
+├─ .github/                          # GitHub config (Actions workflows, etc.)
+├─ app/                              # FastAPI service (main.py, requirements.txt)
+├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
+├─ covid-cfr-ui/                     # Frontend UI application
+├─ covid-cfr-ui-infra/               # Terraform infrastructure for UI
+├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
+├─ docker/                           # NF container build context (Dockerfile.lasso lives here)
+├─ explanations/                     # SHAP/LIME figures, explanation reports
+├─ figures/                          # Visualizations & diagrams used in the README/papers
+├─ lasso_training_data/              # Train/test feature matrices for Lasso
+├─ model_artifacts/                  # Trained models, scalers, checkpoints
+├─ raw_data/                         # Reference genomes & annotations
+├─ scripts/                          # Python utilities & CLI entrypoints
+├─ test_samples/                     # Small FASTA samples for quick runs
+├─ transformed_data/                 # Prepared/subsampled input FASTAs
+├─ .dockerignore                     # Build context excludes for Docker
+├─ .gitignore                        # Git ignore rules
+├─ Dockerfile.api                    # API Container build context
+├─ CITATION.cff                      # Citation metadata for the project
+├─ README.md                         # This documentation
+├─ environment.yml                   # Conda environment spec
+├─ requirements.txt                  # pip requirements
+├─ main.nf                           # Nextflow pipeline entrypoint
+└─ nextflow.config                   # Nextflow profiles & executor configs
+```
 
-### 📌 Longer-term ideas
-- Broaden model/version management (artifact versioning + reproducibility metadata)
-- Extended monitoring/reporting for drift and cohort shifts
+> Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
 
 ---
-
 
 
 ## 🧪 Model Development & Validation
@@ -496,52 +506,30 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 
 ---
 
+## 🗺️ Roadmap / Changelog
 
-## 📌 Features
-- **End-to-end workflow**: Fetch genomes → align (MAFFT) → build mutation features → train ML models → explain results.
-- **Classical ML**: L1-regularized Lasso regression for interpretable, sparse mutation features.
-- **Deep learning baseline (trained; NF integration pending)**: DNABERT fine-tuning module (TensorFlow).
-- **Robustness checks**: Label permutations, feature shuffles, ablations.
-- **Explainability**: SHAP/LIME for mutation-level interpretation.
-- **Scalability**: Nextflow orchestration with AWS Batch for parallel execution.
-- **Observability**: Centralized logging & metrics with **Amazon CloudWatch** (Logs, Metrics, Alarms, Insights).
-- **Productionization**: CI/CD (GitHub Actions → Docker/ECR), MLflow/DVC for versioning (planned), FastAPI service on ECS Fargate (planned), S3 pre-signed I/O + SQS (planned), drift reports (planned).
+### ✅ v2 — Jan 7, 2026
+- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
+- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
+- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
+- Added **download flows**:
+  - `GET /status/{job_id}` returns presigned artifact links
+  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
+- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
+  - `POST /predict` (CFR + per-mutation delta contributions)
+  - `GET /features`, `GET /health`
 
----
+### 🚧 Next (planned)
+- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
+- **RAG-powered natural language interface** for the calculator (ask questions, get grounded answers referencing the model’s feature space)
+- Tighten public demo hardening (rate limiting, origin-restricted CORS, additional abuse prevention)
 
-## 🗂️ Repository Layout
-
-```
-project/
-├─ .github/                          # GitHub config (Actions workflows, etc.)
-├─ app/                              # FastAPI service (main.py, requirements.txt)
-├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
-├─ covid-cfr-ui                      # Frontend UI application
-├─ covid-cfr-ui-infra                # Terraform infrastructure for UI
-├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
-├─ docker/                           # NF container build context (Dockerfile.lasso lives here)
-├─ explanations/                     # SHAP/LIME figures, explanation reports
-├─ figures/                          # Visualizations & diagrams used in the README/papers
-├─ lasso_training_data/              # Train/test feature matrices for Lasso
-├─ model_artifacts/                  # Trained models, scalers, checkpoints
-├─ raw_data/                         # Reference genomes & annotations
-├─ scripts/                          # Python utilities & CLI entrypoints
-├─ test_samples/                     # Small FASTA samples for quick runs
-├─ transformed_data/                 # Prepared/subsampled input FASTAs
-├─ .dockerignore                     # Build context excludes for Docker
-├─ .gitignore                        # Git ignore rules
-├─ Dockerfile.api                    # API Container build context
-├─ CITATION.cff                      # Citation metadata for the project
-├─ README.md                         # This documentation
-├─ environment.yml                   # Conda environment spec
-├─ requirements.txt                  # pip requirements
-├─ main.nf                           # Nextflow pipeline entrypoint
-└─ nextflow.config                   # Nextflow profiles & executor configs
-```
-
-> Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
+### 📌 Longer-term ideas
+- Broaden model/version management (artifact versioning + reproducibility metadata)
+- Extended monitoring/reporting for drift and cohort shifts
 
 ---
+
 
 ## 🗺️ Roadmap / Changelog
 
@@ -580,7 +568,39 @@ project/
 - The demo API enforces an API key on `POST /submit`; the calculator is restricted to an allowlisted IP (dev-only).
 - S3 access is job-scoped via presigned URLs; CI uses AWS OIDC (no long-lived keys).
 
+---
 
+## 🎁 Bonus: COVID-19 patient transcriptomics study (host response)
+
+This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (**mild / moderate / severe**). :contentReference[oaicite:0]{index=0}
+
+### What I did (high level)
+- Parsed patient metadata from the publication’s supplementary patient table and normalized severity labels (mild/moderate/severe). :contentReference[oaicite:1]{index=1}  
+- Pulled differential expression results from the publication’s supplementary “Control_vs_COVID” sheet and used it to generate downstream plots. :contentReference[oaicite:2]{index=2}  
+- Built a gene → pathway mapping using KEGG and summarized pathway-level signals. :contentReference[oaicite:3]{index=3}  
+
+<details>
+<summary><strong>Key findings + artifacts</strong></summary>
+
+<br/>
+
+### Key findings (from the plots)
+- **Inflammation/chemokine signal is prominent**: labeled upregulated genes include **CXCL5, CXCL12, CCL2, CCL4, CXCL10, IFIH1, IFI44, IFIT1, IL6, IL10**. :contentReference[oaicite:4]{index=4}  
+- **Downregulated labels skew toward housekeeping/translation-associated genes**, including **RPL41, RPL17, SLC25A6, CALM1, TUBA1A**. :contentReference[oaicite:5]{index=5}  
+- Pathway-level patterns mirror the gene-level picture: enriched immune signaling pathways include **Cytokine–cytokine receptor interaction, JAK–STAT, Chemokine signaling, Toll-like receptor, IL-17**, and **Complement and coagulation cascades**, while down-regulated groupings include **Ribosome** and **Oxidative phosphorylation** (among others). :contentReference[oaicite:6]{index=6}  
+
+### Artifacts
+- Volcano plot: `cov-19-patient-transcriptomics-study/PLOTS/volcano.pdf` :contentReference[oaicite:7]{index=7}  
+- Pathway dot plot: `cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf` :contentReference[oaicite:8]{index=8}  
+
+### Reproducible scripts
+- `cov-19-patient-transcriptomics-study/CODE/01_data_prep.R` :contentReference[oaicite:9]{index=9}  
+- `cov-19-patient-transcriptomics-study/CODE/02_volcano_plot.R` :contentReference[oaicite:10]{index=10}  
+- `cov-19-patient-transcriptomics-study/CODE/03_dot_plot.R` :contentReference[oaicite:11]{index=11}  
+
+</details>
+
+---
 
 ## 📜 License
 Apache-2.0.
