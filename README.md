@@ -47,7 +47,7 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 The platform has two entrypoints (UI demo + FastAPI calculator) that share a common compute plane (**Nextflow on AWS Batch**) and shared storage/metadata.
 
 ### 🌐 Service A — Public Demo UI (API-key gated submit, async jobs)
-- **Route 53 domain → CloudFront → React/Vite UI**
+- **Route 53 domain → CloudFront → React/Vite UI** *(UI infra managed with Terraform)*
 - UI calls a **REST API Gateway**:
   - `POST /submit` *(API key required)*: creates a DynamoDB job record and submits the **top-level Nextflow runner** as an **AWS Batch job** (stores `batch_job_id`)
   - `GET /status/{job_id}`: reads **DynamoDB** (source of truth) and returns status plus result links (presigned URLs for `predictions.csv` / `failures.csv`)
@@ -394,8 +394,9 @@ project/
 ├─ main.nf                           # Nextflow pipeline entrypoint
 └─ nextflow.config                   # Nextflow profiles & executor configs
 ```
-
-> Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
+**Notes**
+- UI infrastructure is managed with Terraform in `covid-cfr-ui-infra/` (Route 53, CloudFront, and related resources).
+- Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
 
 ---
 
