@@ -23,22 +23,21 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 
 ## 📖 Table of Contents
 
-Use these quick links to jump around this README:
-
-- [🔬 Results at a Glance](#-results-at-a-glance)
-- [📈 Key Figures](#-key-figures)
-- [⚡ TL;DR](#-tldr)
-- [📌 Features](#-features)
+- [🧭 Architecture Overview](#-architecture-overview)
+- [🧩 Services](#-services)
+  - [🌐 Service A — Public Demo UI (async genome scoring)](#-service-a--public-demo-ui-async-genome-scoring)
+  - [🧮 Service B — FastAPI Calculator (private, low-latency)](#-service-b--fastapi-calculator-private-low-latency)
+- [🚀 Quickstart Demo (UI)](#-quickstart-demo-ui)
+- [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
+- [🔐 Access & Security](#-access--security)
+- [⚠️ Limitations / Guardrails](#️-limitations--guardrails)
+- [📦 Outputs](#-outputs)
 - [🗂️ Repository Layout](#️-repository-layout)
-- [🚀 Local Quickstart](#-local-quickstart)
-- [🧩 API quickstart (Fargate)](#-api-quickstart-fargate)
-- [🧬 Workflow Overview](#-workflow-overview)
-- [⚙️ Productionization](#️-productionization)
-- [💻 CLI by Stage](#-cli-by-stage)
-- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
-- [📊 Outputs](#-outputs)
-- [📌 Roadmap](#-roadmap)
-- [🧰 Troubleshooting](#-troubleshooting)
+- [🧪 Model Development & Validation](#-model-development--validation)
+  - [📈 Key Figures](#-key-figures)
+- [🗺️ Roadmap / Changelog](#️-roadmap--changelog)
+- [🎁 Bonus: COVID-19 patient transcriptomics study (host response)](#-bonus-covid-19-patient-transcriptomics-study-host-response)
+- [📚 Citation](#-citation)
 - [📜 License](#-license)
 
 ---
@@ -299,6 +298,18 @@ curl -sS -X POST $BASE/predict \
 5) Download results:
    - Use the UI’s download action (or call `GET /results/{job_id}/zip`) to fetch a ZIP of all job artifacts.
    - For per-sample CSVs, `GET /status/{job_id}` also returns presigned links when `predictions.csv` / `failures.csv` are available.
+  
+---
+
+## 🧰 Troubleshooting (quick)
+
+- **Submit fails / 403:** API key is required for `POST /submit`. Email **achandrasek6@gmail.com** for access.
+- **Job stays in RUNNING/PENDING:** AWS Batch queue time varies; keep polling `GET /status/{job_id}`.
+- **No `predictions.csv` yet:** outputs appear only after the pipeline writes artifacts to S3.
+- **`failures.csv` is populated:** some genomes were rejected during preprocessing/QC; see `failures.csv` for details.
+- **ZIP download fails:** try again (the ZIP is generated on-demand); large jobs may take longer to bundle.
+
+---
 
 
 ## 🔐 Access & Security
