@@ -506,30 +506,6 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 
 ---
 
-## 🗺️ Roadmap / Changelog
-
-### ✅ v2 — Jan 7, 2026
-- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
-- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
-- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
-- Added **download flows**:
-  - `GET /status/{job_id}` returns presigned artifact links
-  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
-- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
-  - `POST /predict` (CFR + per-mutation delta contributions)
-  - `GET /features`, `GET /health`
-
-### 🚧 Next (planned)
-- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
-- **RAG-powered natural language interface** for the calculator (ask questions, get grounded answers referencing the model’s feature space)
-- Tighten public demo hardening (rate limiting, origin-restricted CORS, additional abuse prevention)
-
-### 📌 Longer-term ideas
-- Broaden model/version management (artifact versioning + reproducibility metadata)
-- Extended monitoring/reporting for drift and cohort shifts
-
----
-
 
 ## 🗺️ Roadmap / Changelog
 
@@ -572,35 +548,44 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 
 ## 🎁 Bonus: COVID-19 patient transcriptomics study (host response)
 
-This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (**mild / moderate / severe**). :contentReference[oaicite:0]{index=0}
+This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (mild / moderate / severe).
+
+### Study scope (quick context)
+- Differential expression analysis of **Control vs COVID** nasopharyngeal transcriptomes, with severity metadata (mild/moderate/severe) used for stratified interpretation.
+- Outputs shown here: a **volcano plot** (gene-level signal) and a **pathway dot plot** (KEGG-level summary).
+- **Takeaway:** the signal is dominated by immune/chemokine activation, consistent with a strong antiviral/inflammatory host response.
 
 ### What I did (high level)
-- Parsed patient metadata from the publication’s supplementary patient table and normalized severity labels (mild/moderate/severe). :contentReference[oaicite:1]{index=1}  
-- Pulled differential expression results from the publication’s supplementary “Control_vs_COVID” sheet and used it to generate downstream plots. :contentReference[oaicite:2]{index=2}  
-- Built a gene → pathway mapping using KEGG and summarized pathway-level signals. :contentReference[oaicite:3]{index=3}  
+- Parsed patient metadata from the publication’s supplementary patient table and normalized severity labels (mild/moderate/severe).
+- Pulled differential expression results (Control vs COVID) and generated downstream plots.
+- Built a gene → pathway mapping using KEGG and summarized pathway-level signals.
 
 <details>
-<summary><strong>Key findings + artifacts</strong></summary>
-
-<br/>
+<summary><strong>📌 Key findings + artifacts</strong></summary>
 
 ### Key findings (from the plots)
-- **Inflammation/chemokine signal is prominent**: labeled upregulated genes include **CXCL5, CXCL12, CCL2, CCL4, CXCL10, IFIH1, IFI44, IFIT1, IL6, IL10**. :contentReference[oaicite:4]{index=4}  
-- **Downregulated labels skew toward housekeeping/translation-associated genes**, including **RPL41, RPL17, SLC25A6, CALM1, TUBA1A**. :contentReference[oaicite:5]{index=5}  
-- Pathway-level patterns mirror the gene-level picture: enriched immune signaling pathways include **Cytokine–cytokine receptor interaction, JAK–STAT, Chemokine signaling, Toll-like receptor, IL-17**, and **Complement and coagulation cascades**, while down-regulated groupings include **Ribosome** and **Oxidative phosphorylation** (among others). :contentReference[oaicite:6]{index=6}  
+- Inflammation/chemokine signal is prominent: labeled upregulated genes include CXCL5, CXCL12, CCL2, CCL4, CXCL10, IFIH1, IFI44, IFIT1, IL6, IL10.
+- Downregulated labels skew toward housekeeping/translation-associated genes, including RPL41, RPL17, SLC25A6, CALM1, TUBA1A.
+- Pathway-level patterns mirror the gene-level picture: enriched immune signaling pathways include Cytokine–cytokine receptor interaction, JAK–STAT, Chemokine signaling, Toll-like receptor, IL-17, and Complement and coagulation cascades, while down-regulated groupings include Ribosome and Oxidative phosphorylation (among others).
 
 ### Artifacts
-- Volcano plot: `cov-19-patient-transcriptomics-study/PLOTS/volcano.pdf` :contentReference[oaicite:7]{index=7}  
-- Pathway dot plot: `cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf` :contentReference[oaicite:8]{index=8}  
 
-### Reproducible scripts
-- `cov-19-patient-transcriptomics-study/CODE/01_data_prep.R` :contentReference[oaicite:9]{index=9}  
-- `cov-19-patient-transcriptomics-study/CODE/02_volcano_plot.R` :contentReference[oaicite:10]{index=10}  
-- `cov-19-patient-transcriptomics-study/CODE/03_dot_plot.R` :contentReference[oaicite:11]{index=11}  
+**Volcano plot**
+<p align="center">
+  <img src="cov-19-patient-transcriptomics-study/PLOTS/volcano.png" width="85%" alt="Volcano plot (Control vs COVID)"/>
+</p>
+Full-res PDF: <a href="cov-19-patient-transcriptomics-study/PLOTS/volcano.pdf">volcano.pdf</a>
 
+<p></p>
+
+**Pathway dot plot**
+<p align="center">
+  <img src="cov-19-patient-transcriptomics-study/PLOTS/dot_plot.png" width="85%" alt="Pathway dot plot"/>
+</p>
+Full-res PDF: <a href="cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf">dot_plot.pdf</a>
 </details>
 
 ---
 
 ## 📜 License
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).
