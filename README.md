@@ -566,13 +566,13 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 - CI/CD: GitHub Actions (OIDC) → Docker Buildx → Amazon ECR (runner + pipeline images)
 - DNABERT trained as a standalone artifact (integration pending)
 
-### 🚧 Next (planned)
+### 🛠️ Next (planned)
 - **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
 - **RAG-powered natural language interface** for the calculator (ask questions grounded in the model’s feature space)
 - Public demo hardening: rate limiting, origin-restricted CORS, additional abuse prevention
 - Calculator API improvements: wire additional artifact/version metadata into responses and tighten schema validation
 
-### 📌 Longer-term ideas
+### 🔭 Longer-term ideas
 - Artifact/model versioning and reproducibility metadata (e.g., MLflow or equivalent)
 - Drift monitoring/reporting for cohort and feature distribution shifts
 - Optional UI enhancements for explanations (e.g., lightweight dashboard)
