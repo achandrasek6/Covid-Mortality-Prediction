@@ -30,7 +30,7 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 - [🚀 Quickstart Demo (UI)](#-quickstart-demo-ui)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
 - [🔐 Access & Security](#-access--security)
-- [⚠️ Limitations / Guardrails](#️-limitations--guardrails)
+- [🚧 Limitations / Guardrails](#️-limitations--guardrails)
 - [📦 Outputs](#-outputs)
 - [🗂️ Repository Layout](#️-repository-layout)
 - [🧪 Model Development & Validation](#-model-development--validation)
@@ -328,7 +328,7 @@ curl -sS -X POST $BASE/predict \
 
 ---
 
-## ⚠️ Limitations / Guardrails
+## 🚧 Limitations / Guardrails
 
 - **Controlled demo inputs:** custom uploads are disabled in the public UI to prevent unintended use/abuse.
 - **Async execution:** jobs run via Nextflow on AWS Batch; queue/run time can vary. The UI polls `GET /status/{job_id}` until completion.
