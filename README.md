@@ -629,4 +629,4 @@ If you use this repository or build on it, please cite the project metadata in [
 ---
 
 ## 📜 License
-Apache-2.0.
+This project is licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
