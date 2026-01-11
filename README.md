@@ -586,7 +586,7 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (mild / moderate / severe).
 
 ### Study scope (quick context)
-- Differential expression analysis of **Control vs COVID** nasopharyngeal transcriptomes, with severity metadata (mild/moderate/severe) used for stratified interpretation.
+- Host **RNA-seq** differential expression analysis of **Control vs COVID** nasopharyngeal transcriptomes, stratified by **severity** (mild/moderate/severe).
 - Outputs shown here: a **volcano plot** (gene-level signal) and a **pathway dot plot** (KEGG-level summary).
 - **Takeaway:** the signal is dominated by immune/chemokine activation, consistent with a strong antiviral/inflammatory host response.
 
