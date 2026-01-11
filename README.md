@@ -472,7 +472,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 
 
 
-#### 1) SHAP case studies (model-level explanations)
+#### 1) SHAP summary analyses (global explanations)
 
 <table>
   <tr>
