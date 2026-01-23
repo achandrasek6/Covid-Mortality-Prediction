@@ -1307,14 +1307,6 @@ function App() {
       color: "#1d4ed8",
     };
 
-    const pillDisabled: React.CSSProperties = {
-      ...pillBase,
-      borderColor: "#e2e8f0",
-      background: "#ffffff",
-      color: "#94a3b8",
-      cursor: "not-allowed",
-      opacity: 0.6,
-    };
 
     const pillChooseFile: React.CSSProperties = {
       ...pillBase,
@@ -1330,12 +1322,6 @@ function App() {
       color: "#047857",
     };
 
-    const pillNeutral: React.CSSProperties = {
-      ...pillBase,
-      borderColor: "#cbd5e1",
-      background: "#f1f5f9",
-      color: "#334155",
-    };
 
     const pillWhite: React.CSSProperties = {
   ...pillBase,
@@ -1345,12 +1331,6 @@ function App() {
   fontWeight: 800,
 };
 
-    const pillDanger: React.CSSProperties = {
-      ...pillBase,
-      borderColor: "#fecdd3",
-      background: "#fff1f2",
-      color: "#be123c",
-    };
 
     const pillIconDanger: React.CSSProperties = {
   width: 28,
