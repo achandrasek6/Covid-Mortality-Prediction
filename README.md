@@ -7,7 +7,7 @@
 [![Deploy API](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
 [![Build NF Runner](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml)
 
-**Live demo:** https://www.covid-cfr-predictor.com/ *(API key required — email achandrasek6@gmail.com for access)*
+🔗 **Live demo:** https://www.covid-cfr-predictor.com/ *(API key required — email achandrasek6@gmail.com for access)*
 
 A cloud-native, reproducible system that predicts **variant-specific COVID-19 case-fatality rates (CFR)** from viral genomes. It includes (1) a **public demo UI** for end-to-end CFR prediction from genome sequences and (2) a **low-latency FastAPI “calculator” service** that returns an overall CFR prediction plus **per-mutation delta contributions** from mutation JSON inputs. Both services submit work to a shared compute plane orchestrated with **Nextflow DSL2** and executed in containers on **AWS Batch** (with images published to **ECR**).
 
@@ -23,22 +23,21 @@ A cloud-native, reproducible system that predicts **variant-specific COVID-19 ca
 
 ## 📖 Table of Contents
 
-Use these quick links to jump around this README:
-
-- [🔬 Results at a Glance](#-results-at-a-glance)
-- [📈 Key Figures](#-key-figures)
-- [⚡ TL;DR](#-tldr)
-- [📌 Features](#-features)
+- [🧭 Architecture Overview](#-architecture-overview)
+- [🧩 Services](#-services)
+  - [🌐 Service A — Public Demo UI (async genome scoring)](#-service-a--public-demo-ui-async-genome-scoring)
+  - [🧮 Service B — FastAPI Calculator (private, low-latency)](#-service-b--fastapi-calculator-private-low-latency)
+- [🚀 Quickstart Demo (UI)](#-quickstart-demo-ui)
+- [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
+- [🔐 Access & Security](#-access--security)
+- [🚧 Limitations / Guardrails](#-limitations--guardrails)
+- [📦 Outputs](#-outputs)
 - [🗂️ Repository Layout](#️-repository-layout)
-- [🚀 Local Quickstart](#-local-quickstart)
-- [🧩 API quickstart (Fargate)](#-api-quickstart-fargate)
-- [🧬 Workflow Overview](#-workflow-overview)
-- [⚙️ Productionization](#️-productionization)
-- [💻 CLI by Stage](#-cli-by-stage)
-- [🧭 Nextflow Entrypoint](#-nextflow-entrypoint)
-- [📊 Outputs](#-outputs)
-- [📌 Roadmap](#-roadmap)
-- [🧰 Troubleshooting](#-troubleshooting)
+- [🧪 Model Development & Validation](#-model-development--validation)
+  - [📈 Key Figures](#-key-figures)
+- [🗺️ Roadmap / Changelog](#️-roadmap--changelog)
+- [🎁 Bonus: COVID-19 patient transcriptomics study (host response)](#-bonus-covid-19-patient-transcriptomics-study-host-response)
+- [📚 Citation](#-citation)
 - [📜 License](#-license)
 
 ---
@@ -48,7 +47,7 @@ Use these quick links to jump around this README:
 The platform has two entrypoints (UI demo + FastAPI calculator) that share a common compute plane (**Nextflow on AWS Batch**) and shared storage/metadata.
 
 ### 🌐 Service A — Public Demo UI (API-key gated submit, async jobs)
-- **Route 53 domain → CloudFront → React/Vite UI**
+- **Route 53 domain → CloudFront → React/Vite UI** *(UI infra managed with Terraform)*
 - UI calls a **REST API Gateway**:
   - `POST /submit` *(API key required)*: creates a DynamoDB job record and submits the **top-level Nextflow runner** as an **AWS Batch job** (stores `batch_job_id`)
   - `GET /status/{job_id}`: reads **DynamoDB** (source of truth) and returns status plus result links (presigned URLs for `predictions.csv` / `failures.csv`)
@@ -281,22 +280,60 @@ curl -sS -X POST $BASE/predict \
 
 ---
 
+## 🚀 Quickstart Demo (UI)
+
+1) Open the live demo: https://www.covid-cfr-predictor.com/  
+   Request an API key at **achandrasek6@gmail.com** (required for `POST /submit`).
+
+2) Choose an input mode in the UI:
+   - **Quick demo** (preconfigured tiny dataset), or
+   - **Single file demo** (preconfigured small dataset), or
+   - **Multi-file demo** (multiple files; each file may contain one or many genomes)
+
+3) Click **Submit** to start a job. The UI will display a `job_id`.
+
+4) Wait for completion while the UI polls job status (`GET /status/{job_id}`).
+   - Status is sourced from **DynamoDB** and updated via **AWS Batch events**.
+
+5) Download results:
+   - Use the UI’s download action (or call `GET /results/{job_id}/zip`) to fetch a ZIP of all job artifacts.
+   - For per-sample CSVs, `GET /status/{job_id}` also returns presigned links when `predictions.csv` / `failures.csv` are available.
+  
+---
+
+## 🧰 Troubleshooting (quick)
+
+- **Submit fails / 403:** API key is required for `POST /submit`. Email **achandrasek6@gmail.com** for access.
+- **Job stays in RUNNING/PENDING:** AWS Batch queue time varies; keep polling `GET /status/{job_id}`.
+- **No `predictions.csv` yet:** outputs appear only after the pipeline writes artifacts to S3.
+- **`failures.csv` is populated:** some genomes were rejected during preprocessing/QC; see `failures.csv` for details.
+- **ZIP download fails:** try again (the ZIP is generated on-demand); large jobs may take longer to bundle.
+
+---
+
+
 ## 🔐 Access & Security
 
 **🌐 Demo UI (Service A)**
-- The UI is publicly reachable at https://www.covid-cfr-predictor.com/.
-- The backend REST API enforces an **API key on `POST /submit`** to control usage and costs.
-- **Custom file upload is disabled** in the public demo to prevent unintended use/abuse; the UI is intended for controlled/demo inputs.
-- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) are not API-key gated and return only job-scoped artifacts.
+- Publicly reachable at https://www.covid-cfr-predictor.com/.
+- Backend enforces an **API key on `POST /submit`** to control usage and costs (request access via **achandrasek6@gmail.com**).
+- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) do not require an API key.
 
 **🧮 Calculator API (Service B)**
-- The FastAPI service is deployed behind an internet-facing ALB but is currently **restricted to an allowlisted IP** (dev-only).
-- The endpoint is not published; access can be granted on request.
+- Deployed behind an internet-facing ALB but currently **restricted to an allowlisted IP** (dev-only).
+- Endpoint is not published; access can be granted on request.
 
-**Operational guardrails**
-- **DynamoDB is the status source of truth**; **AWS Batch events** update job state.
-- Result access is **job-scoped**: status returns **presigned artifact links**; `/zip` returns a **job output bundle**.
-- No secrets or live endpoints are committed; request demo access via **achandrasek6@gmail.com**.
+**Hygiene**
+- No secrets or live internal endpoints are committed to the repo.
+
+---
+
+## 🚧 Limitations / Guardrails
+
+- **Controlled demo inputs:** custom uploads are disabled in the public UI to prevent unintended use/abuse.
+- **Async execution:** jobs run via Nextflow on AWS Batch; queue/run time can vary. The UI polls `GET /status/{job_id}` until completion.
+- **Job-scoped outputs:** results are isolated per `job_id`. Status returns presigned artifact links when available; `/results/{job_id}/zip` returns a ZIP of the job’s S3 outputs.
+- **Feature space constraints:** predictions and per-mutation deltas are defined over the mutation-derived Lasso feature set (see `GET /features`).
 
 ---
 
@@ -357,8 +394,9 @@ project/
 ├─ main.nf                           # Nextflow pipeline entrypoint
 └─ nextflow.config                   # Nextflow profiles & executor configs
 ```
-
-> Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
+**Notes**
+- UI infrastructure is managed with Terraform in `covid-cfr-ui-infra/` (Route 53, CloudFront, and related resources).
+- Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
 
 ---
 
@@ -434,7 +472,7 @@ Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −
 
 
 
-#### 1) SHAP case studies (model-level explanations)
+#### 1) SHAP summary analyses (global explanations)
 
 <table>
   <tr>
@@ -506,30 +544,6 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 
 ---
 
-## 🗺️ Roadmap / Changelog
-
-### ✅ v2 — Jan 7, 2026
-- Shipped **public demo UI** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda
-- Implemented async job lifecycle with **DynamoDB** (status source of truth) + **EventBridge** (AWS Batch state change events)
-- Deployed Nextflow compute plane on **AWS Batch** (runner image + pipeline images in **ECR**), with artifacts written to **S3**
-- Added **download flows**:
-  - `GET /status/{job_id}` returns presigned artifact links
-  - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
-- Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
-  - `POST /predict` (CFR + per-mutation delta contributions)
-  - `GET /features`, `GET /health`
-
-### 🚧 Next (planned)
-- **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
-- **RAG-powered natural language interface** for the calculator (ask questions, get grounded answers referencing the model’s feature space)
-- Tighten public demo hardening (rate limiting, origin-restricted CORS, additional abuse prevention)
-
-### 📌 Longer-term ideas
-- Broaden model/version management (artifact versioning + reproducibility metadata)
-- Extended monitoring/reporting for drift and cohort shifts
-
----
-
 
 ## 🗺️ Roadmap / Changelog
 
@@ -540,6 +554,7 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 - Added download flows:
   - `GET /status/{job_id}` returns presigned artifact links
   - `GET /results/{job_id}/zip` returns a ZIP of all job artifacts
+- Added API-key gating on POST /submit and job-scoped artifact access (presigned URLs / ZIP).
 - Deployed **FastAPI calculator** on **ECS Fargate** (ALB, IP allowlisted) with:
   - `POST /predict` (CFR + per-mutation delta contributions)
   - `GET /features`, `GET /health`
@@ -552,55 +567,66 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 - CI/CD: GitHub Actions (OIDC) → Docker Buildx → Amazon ECR (runner + pipeline images)
 - DNABERT trained as a standalone artifact (integration pending)
 
-### 🚧 Next (planned)
+### 🛠️ Next (planned)
 - **DNABERT GPU stage** integrated into Nextflow (optional toggle for higher-capacity inference)
 - **RAG-powered natural language interface** for the calculator (ask questions grounded in the model’s feature space)
 - Public demo hardening: rate limiting, origin-restricted CORS, additional abuse prevention
 - Calculator API improvements: wire additional artifact/version metadata into responses and tighten schema validation
 
-### 📌 Longer-term ideas
+### 🔭 Longer-term ideas
 - Artifact/model versioning and reproducibility metadata (e.g., MLflow or equivalent)
 - Drift monitoring/reporting for cohort and feature distribution shifts
 - Optional UI enhancements for explanations (e.g., lightweight dashboard)
 - Multi-omics extensions (host transcriptomics as an additional study/module)
 
-### 🔒 Security (high level)
-- The demo API enforces an API key on `POST /submit`; the calculator is restricted to an allowlisted IP (dev-only).
-- S3 access is job-scoped via presigned URLs; CI uses AWS OIDC (no long-lived keys).
-
 ---
 
 ## 🎁 Bonus: COVID-19 patient transcriptomics study (host response)
 
-This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (**mild / moderate / severe**). :contentReference[oaicite:0]{index=0}
+This section summarizes a small transcriptomics analysis on COVID-19 patient nasopharyngeal samples, stratified by clinical severity (mild / moderate / severe).
+
+### Study scope (quick context)
+- Host **RNA-seq** differential expression analysis of **Control vs COVID** nasopharyngeal transcriptomes, stratified by **severity** (mild/moderate/severe).
+- Outputs shown here: a **volcano plot** (gene-level signal) and a **pathway dot plot** (KEGG-level summary).
+- **Takeaway:** the signal is dominated by immune/chemokine activation, consistent with a strong antiviral/inflammatory host response.
 
 ### What I did (high level)
-- Parsed patient metadata from the publication’s supplementary patient table and normalized severity labels (mild/moderate/severe). :contentReference[oaicite:1]{index=1}  
-- Pulled differential expression results from the publication’s supplementary “Control_vs_COVID” sheet and used it to generate downstream plots. :contentReference[oaicite:2]{index=2}  
-- Built a gene → pathway mapping using KEGG and summarized pathway-level signals. :contentReference[oaicite:3]{index=3}  
+- Parsed patient metadata from the publication’s supplementary patient table and normalized severity labels (mild/moderate/severe).
+- Pulled differential expression results (Control vs COVID) and generated downstream plots.
+- Built a gene → pathway mapping using KEGG and summarized pathway-level signals.
 
 <details>
-<summary><strong>Key findings + artifacts</strong></summary>
-
-<br/>
+<summary><strong>📌 Key findings + artifacts</strong></summary>
 
 ### Key findings (from the plots)
-- **Inflammation/chemokine signal is prominent**: labeled upregulated genes include **CXCL5, CXCL12, CCL2, CCL4, CXCL10, IFIH1, IFI44, IFIT1, IL6, IL10**. :contentReference[oaicite:4]{index=4}  
-- **Downregulated labels skew toward housekeeping/translation-associated genes**, including **RPL41, RPL17, SLC25A6, CALM1, TUBA1A**. :contentReference[oaicite:5]{index=5}  
-- Pathway-level patterns mirror the gene-level picture: enriched immune signaling pathways include **Cytokine–cytokine receptor interaction, JAK–STAT, Chemokine signaling, Toll-like receptor, IL-17**, and **Complement and coagulation cascades**, while down-regulated groupings include **Ribosome** and **Oxidative phosphorylation** (among others). :contentReference[oaicite:6]{index=6}  
+- Inflammation/chemokine signal is prominent: labeled upregulated genes include CXCL5, CXCL12, CCL2, CCL4, CXCL10, IFIH1, IFI44, IFIT1, IL6, IL10.
+- Downregulated labels skew toward housekeeping/translation-associated genes, including RPL41, RPL17, SLC25A6, CALM1, TUBA1A.
+- Pathway-level patterns mirror the gene-level picture: enriched immune signaling pathways include Cytokine–cytokine receptor interaction, JAK–STAT, Chemokine signaling, Toll-like receptor, IL-17, and Complement and coagulation cascades, while down-regulated groupings include Ribosome and Oxidative phosphorylation (among others).
 
 ### Artifacts
-- Volcano plot: `cov-19-patient-transcriptomics-study/PLOTS/volcano.pdf` :contentReference[oaicite:7]{index=7}  
-- Pathway dot plot: `cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf` :contentReference[oaicite:8]{index=8}  
 
-### Reproducible scripts
-- `cov-19-patient-transcriptomics-study/CODE/01_data_prep.R` :contentReference[oaicite:9]{index=9}  
-- `cov-19-patient-transcriptomics-study/CODE/02_volcano_plot.R` :contentReference[oaicite:10]{index=10}  
-- `cov-19-patient-transcriptomics-study/CODE/03_dot_plot.R` :contentReference[oaicite:11]{index=11}  
+**Volcano plot**
+<p align="center">
+  <img src="cov-19-patient-transcriptomics-study/PLOTS/volcano.png" width="85%" alt="Volcano plot (Control vs COVID)"/>
+</p>
+Full-res PDF: <a href="cov-19-patient-transcriptomics-study/PLOTS/volcano.pdf">volcano.pdf</a>
 
+<p></p>
+
+**Pathway dot plot**
+<p align="center">
+  <img src="cov-19-patient-transcriptomics-study/PLOTS/dot_plot.png" width="85%" alt="Pathway dot plot"/>
+</p>
+Full-res PDF: <a href="cov-19-patient-transcriptomics-study/PLOTS/dot_plot.pdf">dot_plot.pdf</a>
 </details>
 
 ---
 
+## 📚 Citation
+
+If you use this repository or build on it, please cite the project metadata in [`CITATION.cff`](CITATION.cff).
+
+---
+
 ## 📜 License
-Apache-2.0.
+This project is licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
