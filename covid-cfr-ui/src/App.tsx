@@ -8,7 +8,6 @@ const API_BASE =
 
 // ✅ API key support (API Gateway expects x-api-key)
 const API_KEY_HEADER = "x-api-key";
-
 const SEND_API_KEY_ON_STATUS = false;
 
 function withApiKeyHeaders(apiKey: string, headers?: HeadersInit): HeadersInit {
@@ -56,6 +55,47 @@ type SubmitPayload = {
   outdir: string;
 };
 
+type UploadedFileInfo = { filename: string; s3_uri: string };
+
+// ---- Upload flow types (phase:init + presigned POST + phase:finalize) ----
+type PresignedPost = { url: string; fields: Record<string, string> };
+
+type InitUploadResponse = {
+  message: string;
+  job_id: string;
+  status: string;
+  upload_bucket: string;
+  upload_prefix: string;
+  files: Array<{
+    filename: string;
+    key: string;
+    s3_uri: string;
+    post: PresignedPost;
+  }>;
+  expires_in: number;
+  job_outdir: string;
+};
+
+type FinalizeResponse = {
+  message: string;
+  job_id: string;
+  batch_job_id: string;
+  status: string;
+  samples_uri?: string;
+};
+
+async function uploadViaPresignedPost(file: File, post: PresignedPost): Promise<void> {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(post.fields)) form.append(k, v);
+  form.append("file", file);
+
+  const resp = await fetch(post.url, { method: "POST", body: form });
+  if (!resp.ok) {
+    const msg = await resp.text().catch(() => "");
+    throw new Error(`S3 upload failed (${resp.status}). ${msg.slice(0, 300)}`);
+  }
+}
+
 type ModalContent = {
   title: string;
   body: string;
@@ -92,12 +132,12 @@ const SAMPLE_OPTIONS = [
     hint:
       "Single-file demo: one FASTA containing a small set of SARS-CoV-2 genomes.",
   },
-      {
-      label: "Demo (multi-file input): demo FASTA + reject test",
-      value: "s3://ach-covid-lasso-us-east-2/inputs/test_samples/multifile_demo/*",
-      hint:
-        "Multi-file demo: includes (1) A small SARS-CoV-2 variant samples file and (2) a reject test file where some records intentionally fail validation and are routed to a rejected output.",
-    },
+  {
+    label: "Demo (multi-file input): demo FASTA + reject test",
+    value: "s3://ach-covid-lasso-us-east-2/inputs/test_samples/multifile_demo/*",
+    hint:
+      "Multi-file demo: includes (1) A small SARS-CoV-2 variant samples file and (2) a reject test file where some records intentionally fail validation and are routed to a rejected output.",
+  },
 ];
 
 const REFERENCE_OPTIONS = [
@@ -153,10 +193,8 @@ const MODEL_PACKAGE_OPTIONS = [
   },
 ] as const;
 
-// ✅ IMPORTANT: derive a union type from the option values
 type ModelPackageChoice = (typeof MODEL_PACKAGE_OPTIONS)[number]["value"];
 
-// ✅ Guard to safely accept persisted strings / <select> values
 const isModelPackageChoice = (v: unknown): v is ModelPackageChoice =>
   typeof v === "string" && MODEL_PACKAGE_OPTIONS.some((o) => o.value === v);
 
@@ -185,16 +223,15 @@ function normalizeStatus(status?: string) {
 
 function statusColors(status?: string) {
   const s = normalizeStatus(status);
-  const palette: Record<string, { bg: string; border: string; text: string }> =
-    {
-      SUBMITTED: { bg: "#f1f5f9", border: "#cbd5e1", text: "#334155" },
-      RUNNABLE: { bg: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" },
-      STARTING: { bg: "#faf5ff", border: "#e9d5ff", text: "#6d28d9" },
-      RUNNING: { bg: "#fffbeb", border: "#fde68a", text: "#b45309" },
-      SUCCEEDED: { bg: "#ecfdf5", border: "#a7f3d0", text: "#047857" },
-      FAILED: { bg: "#fff1f2", border: "#fecdd3", text: "#be123c" },
-      DONE: { bg: "#f8fafc", border: "#e2e8f0", text: "#475569" },
-    };
+  const palette: Record<string, { bg: string; border: string; text: string }> = {
+    SUBMITTED: { bg: "#f1f5f9", border: "#cbd5e1", text: "#334155" },
+    RUNNABLE: { bg: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" },
+    STARTING: { bg: "#faf5ff", border: "#e9d5ff", text: "#6d28d9" },
+    RUNNING: { bg: "#fffbeb", border: "#fde68a", text: "#b45309" },
+    SUCCEEDED: { bg: "#ecfdf5", border: "#a7f3d0", text: "#047857" },
+    FAILED: { bg: "#fff1f2", border: "#fecdd3", text: "#be123c" },
+    DONE: { bg: "#f8fafc", border: "#e2e8f0", text: "#475569" },
+  };
   return palette[s] || { bg: "#f8fafc", border: "#e2e8f0", text: "#475569" };
 }
 
@@ -204,8 +241,7 @@ const STATUS_HELP: Record<string, string> = {
   STARTING: "Compute allocated. Job is starting up.",
   RUNNING: "Job is actively running.",
   SUCCEEDED: "Completed successfully. Download is available.",
-  FAILED:
-    "Completed with an error. Open Job details to see the error message (if available).",
+  FAILED: "Completed with an error. Open Job details to see the error message (if available).",
   DONE: "Terminal step. ✓ if succeeded, ⚠ if failed.",
   UNKNOWN: "Status is not recognized.",
 };
@@ -276,7 +312,6 @@ function useWindowWidth() {
 // ✅ Status fetch (conditionally sends x-api-key)
 async function fetchJobStatus(jobId: string, apiKey: string): Promise<JobStatus> {
   const baseHeaders: HeadersInit = { Accept: "application/json" };
-
   const headers = SEND_API_KEY_ON_STATUS
     ? withApiKeyHeaders(apiKey, baseHeaders)
     : baseHeaders;
@@ -286,12 +321,8 @@ async function fetchJobStatus(jobId: string, apiKey: string): Promise<JobStatus>
     headers,
   });
 
-  if (!resp.ok) {
-    throw new Error(await readErrorMessage(resp));
-  }
-
-  const data = await resp.json();
-  return data as JobStatus;
+  if (!resp.ok) throw new Error(await readErrorMessage(resp));
+  return (await resp.json()) as JobStatus;
 }
 
 function parseTimeMs(ts?: string): number | null {
@@ -303,7 +334,6 @@ function parseTimeMs(ts?: string): number | null {
 function createdMs(job: JobStatus) {
   return parseTimeMs(job.created_at) ?? Number.NEGATIVE_INFINITY;
 }
-
 function updatedMs(job: JobStatus) {
   return (
     parseTimeMs(job.updated_at) ??
@@ -514,7 +544,6 @@ function InfoIcon({
   title?: string;
   hoverText?: string;
 }) {
-  // Use HoverTip everywhere; never use native title tooltips.
   const tipText = hoverText || title;
 
   const btn = (
@@ -919,23 +948,22 @@ function triggerDownload(url: string) {
 }
 
 // ---------------------------
-// Session persistence (v1)
+// Session persistence (v2)
 // ---------------------------
-const SESSION_KEY = "covid_cfr_console_state_v1";
+const SESSION_KEY = "covid_cfr_console_state_v1"; // keep the same key
+
+type GenomesInputMode = "preset" | "upload";
 
 type PersistedStateV1 = {
   v: 1;
 
-  // ✅ new: persist apiKey for this tab/session
   apiKey?: string;
 
-  // table + client-only metadata
   recentJobs: JobStatus[];
   jobMetaById: Record<string, JobMeta>;
   jobInputsById: Record<string, SubmitPayload>;
   jobModelPackageById: Record<string, string>;
 
-  // UI state worth restoring
   checkedIds: string[];
   selectedJobId: string | null;
 
@@ -946,11 +974,9 @@ type PersistedStateV1 = {
   sortDir: SortDir;
   pageIndex: number;
 
-  // small toggles
   lifecycleOpen: boolean;
   advancedOpen: boolean;
 
-  // form state persistence
   jobNameDraft: string;
   jobDescriptionDraft: string;
 
@@ -958,39 +984,77 @@ type PersistedStateV1 = {
   useCustomSamples: boolean;
   customSamples: string;
 
-  // persisted as string for backwards compatibility
   modelPackageChoice: string;
 
   outdirChoice: string;
   useCustomOutdir: boolean;
   customOutdir: string;
 
-  // display-only; cannot restore real file attachment
   localFileName: string | null;
+};
+
+type PersistedStateV2 = Omit<PersistedStateV1, "v" | "localFileName"> & {
+  v: 2;
+  genomesMode: GenomesInputMode;
+  localFileNames: string[]; // names only; live File objects cannot be restored
 };
 
 function getSessionStorage(): Storage | null {
   if (typeof window === "undefined") return null;
-  // swap to localStorage if you want persistence across browser restarts
   return window.sessionStorage;
 }
 
-function readPersistedState(): PersistedStateV1 | null {
+
+type PersistedStateV3 = Omit<PersistedStateV2, "v"> & {
+  v: 3;
+  jobUploadedFilesById: Record<string, UploadedFileInfo[]>;
+};
+
+function readPersistedState(): PersistedStateV3 | null {
   const store = getSessionStorage();
   if (!store) return null;
 
   try {
     const raw = store.getItem(SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as PersistedStateV1;
-    if (!parsed || parsed.v !== 1) return null;
-    return parsed;
+
+    const parsed = JSON.parse(raw) as any;
+    if (!parsed) return null;
+
+    // v3 (new)
+    if (parsed.v === 3) return parsed as PersistedStateV3;
+
+    // v2 -> v3 migration
+    if (parsed.v === 2) {
+      const v2 = parsed as PersistedStateV2;
+      const migrated: PersistedStateV3 = {
+        ...v2,
+        v: 3,
+        jobUploadedFilesById: {}, // nothing existed before; start empty
+      };
+      return migrated;
+    }
+
+    // v1 -> v3 migration (if you still care)
+    if (parsed.v === 1) {
+      const v1 = parsed as PersistedStateV1;
+      const migrated: PersistedStateV3 = {
+        ...v1,
+        v: 3,
+        genomesMode: v1.localFileName ? "upload" : "preset",
+        localFileNames: v1.localFileName ? [v1.localFileName] : [],
+        jobUploadedFilesById: {},
+      } as any;
+      return migrated;
+    }
+
+    return null;
   } catch {
     return null;
   }
 }
 
-function writePersistedState(state: PersistedStateV1) {
+function writePersistedState(state: PersistedStateV3) {
   const store = getSessionStorage();
   if (!store) return;
 
@@ -1023,7 +1087,6 @@ function App() {
   const [customSamples, setCustomSamples] = useState("");
 
   // bundled model package (single dropdown)
-  // ✅ IMPORTANT: explicitly type to union (prevents "lasso_v1" literal-only state)
   const [modelPackageChoice, setModelPackageChoice] =
     useState<ModelPackageChoice>(MODEL_PACKAGE_OPTIONS[0].value);
 
@@ -1044,11 +1107,15 @@ function App() {
   const [useCustomOutdir, setUseCustomOutdir] = useState(false);
   const [customOutdir, setCustomOutdir] = useState("");
 
-  const [localFileName, setLocalFileName] = useState<string | null>(null);
+    // ✅ NEW: mutually exclusive genomes input mode (preset vs upload)
+    const [genomesMode, setGenomesMode] = useState<GenomesInputMode>("preset");
 
-  // Local upload: browsers cannot restore <input type="file"> after reload.
-  // Track whether a live File is currently attached in this runtime.
-  const [hasLiveFile, setHasLiveFile] = useState(false);
+    // ✅ NEW: multi-file local uploads (up to 5). Files cannot be restored after reload.
+    const MAX_LOCAL_FILES = 5;
+    const [localFiles, setLocalFiles] = useState<Array<File | null>>([null]);
+    const [localFileNames, setLocalFileNames] = useState<string[]>([]); // persisted/display only
+    const [hasLiveFiles, setHasLiveFiles] = useState(false);
+    const localFileInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
   // advanced settings (fixed + collapsible)
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -1057,14 +1124,14 @@ function App() {
   const [jobName, setJobName] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [jobMetaById, setJobMetaById] = useState<Record<string, JobMeta>>({});
-  const [jobInputsById, setJobInputsById] = useState<
-    Record<string, SubmitPayload>
-  >({});
+  const [jobInputsById, setJobInputsById] = useState<Record<string, SubmitPayload>>({});
 
-  // store chosen package label for run summary
-  const [jobModelPackageById, setJobModelPackageById] = useState<
-    Record<string, string>
-  >({});
+  const [jobModelPackageById, setJobModelPackageById] = useState<Record<string, string>>({});
+
+  // ✅ NEW: uploaded filenames (for local-upload jobs), keyed by job_id
+    const [jobUploadedFilesById, setJobUploadedFilesById] = useState<
+      Record<string, UploadedFileInfo[]>
+    >({});
 
   // submit/status
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1117,7 +1184,6 @@ function App() {
   const effectiveOutdir =
     useCustomOutdir && !DEMO_LOCK_CUSTOM_S3 ? customOutdir.trim() : outdirChoice;
 
-  // Keep the infra-logic/state for future product mode, but mirror the dropdown into custom values in demo-lock mode
   useEffect(() => {
     if (DEMO_LOCK_CUSTOM_S3 && useCustomSamples) setCustomSamples(sampleChoice);
   }, [useCustomSamples, sampleChoice]);
@@ -1223,6 +1289,132 @@ function App() {
     width: "100%",
   };
 
+      // --- Upload UI pill colors (preset/upload section) ---
+    const pillBase: React.CSSProperties = {
+      fontSize: "11px",
+      padding: "5px 10px",
+      borderRadius: "999px",
+      border: "1px solid #e2e8f0",
+      background: "#ffffff",
+      cursor: "pointer",
+      fontWeight: 900,
+    };
+
+    const pillPrimary: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#bfdbfe",
+      background: "#eff6ff",
+      color: "#1d4ed8",
+    };
+
+    const pillDisabled: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#e2e8f0",
+      background: "#ffffff",
+      color: "#94a3b8",
+      cursor: "not-allowed",
+      opacity: 0.6,
+    };
+
+    const pillChooseFile: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#ddd6fe",
+      background: "#f5f3ff",
+      color: "#6d28d9",
+    };
+
+        const pillChooseFileSelected: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#a7f3d0",
+      background: "#ecfdf5",
+      color: "#047857",
+    };
+
+    const pillNeutral: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#cbd5e1",
+      background: "#f1f5f9",
+      color: "#334155",
+    };
+
+    const pillWhite: React.CSSProperties = {
+  ...pillBase,
+  borderColor: "#e2e8f0",
+  background: "#ffffff",
+  color: "#334155",
+  fontWeight: 800,
+};
+
+    const pillDanger: React.CSSProperties = {
+      ...pillBase,
+      borderColor: "#fecdd3",
+      background: "#fff1f2",
+      color: "#be123c",
+    };
+
+    const pillIconDanger: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: 999,
+  border: "1px solid #fecdd3",
+  background: "#fff1f2",
+  color: "#be123c",
+  cursor: "pointer",
+  fontWeight: 900,
+  lineHeight: 1,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+    function clearLocalUploads() {
+      setLocalFiles([null]);
+      setLocalFileNames([]);
+      setHasLiveFiles(false);
+
+      for (const ref of localFileInputRefs.current) {
+        if (ref) ref.value = "";
+      }
+
+      // keep refs aligned after shrinking back to one slot
+      localFileInputRefs.current = [];
+    }
+
+    function setModeExclusive(mode: GenomesInputMode) {
+      setGenomesMode(mode);
+
+      // Switching back to preset clears local selections to prevent accidental upload
+      if (mode === "preset") {
+        clearLocalUploads();
+      }
+    }
+
+    function updateLocalFileAt(idx: number, file: File | null) {
+      const next = [...localFiles];
+      next[idx] = file;
+
+      setLocalFiles(next);
+      setHasLiveFiles(next.some(Boolean));
+      setLocalFileNames(next.filter(Boolean).map((f) => (f as File).name));
+    }
+
+    function addLocalFileSlot() {
+      if (localFiles.length >= MAX_LOCAL_FILES) return;
+      setLocalFiles((prev) => [...prev, null]);
+    }
+
+    function removeLocalFileSlot(idx: number) {
+      if (localFiles.length <= 1) return;
+
+      const next = localFiles.filter((_, i) => i !== idx);
+      setLocalFiles(next);
+      setHasLiveFiles(next.some(Boolean));
+      setLocalFileNames(next.filter(Boolean).map((f) => (f as File).name));
+
+      // keep refs aligned (best-effort)
+      localFileInputRefs.current.splice(idx, 1);
+    }
+
   // ---------------------------
   // Helpers that depend on state
   // ---------------------------
@@ -1250,113 +1442,103 @@ function App() {
     }
   }
 
-  // ---------------------------
-  // Hydrate from session on mount
-  // ---------------------------
-  useEffect(() => {
-    const restored = readPersistedState();
+// ---------------------------
+// Hydrate from session on mount
+// ---------------------------
+useEffect(() => {
+  const restored = readPersistedState();
 
-    // after reload: no live file object exists
-    setHasLiveFile(false);
+  // after reload: no live File objects exist
+  setHasLiveFiles(false);
+  setLocalFiles([null]);
 
-    if (restored) {
-      // ✅ restore apiKey
-      setApiKey(typeof restored.apiKey === "string" ? restored.apiKey : "");
+  if (restored) {
+    setApiKey(typeof restored.apiKey === "string" ? restored.apiKey : "");
 
-      // Restore table + metadata
-      setRecentJobs(
-        Array.isArray(restored.recentJobs) ? restored.recentJobs : []
-      );
-      setJobMetaById(restored.jobMetaById || {});
-      setJobInputsById(restored.jobInputsById || {});
-      setJobModelPackageById(restored.jobModelPackageById || {});
+    setRecentJobs(Array.isArray(restored.recentJobs) ? restored.recentJobs : []);
+    setJobMetaById(restored.jobMetaById || {});
+    setJobInputsById(restored.jobInputsById || {});
+    setJobModelPackageById(restored.jobModelPackageById || {});
 
-      // Restore selection / highlight
-      const restoredJobIds = new Set(
-        (restored.recentJobs || []).map((j) => j.job_id)
-      );
-      const cleanedChecked = (restored.checkedIds || []).filter((id) =>
-        restoredJobIds.has(id)
-      );
-      setCheckedIds(new Set(cleanedChecked));
+    const restoredJobIds = new Set((restored.recentJobs || []).map((j) => j.job_id));
+    const cleanedChecked = (restored.checkedIds || []).filter((id) => restoredJobIds.has(id));
+    setCheckedIds(new Set(cleanedChecked));
 
-      const restoredSelected =
-        restored.selectedJobId && restoredJobIds.has(restored.selectedJobId)
-          ? restored.selectedJobId
-          : null;
+    const restoredSelected =
+      restored.selectedJobId && restoredJobIds.has(restored.selectedJobId)
+        ? restored.selectedJobId
+        : null;
 
-      setSelectedJobId(restoredSelected);
+    // ✅ NEW (v3): restore uploaded file names for local-upload jobs
+    const uploadedRaw =
+      restored.jobUploadedFilesById && typeof restored.jobUploadedFilesById === "object"
+        ? (restored.jobUploadedFilesById as Record<string, UploadedFileInfo[]>)
+        : {};
 
-      // If we have a selected job, refetch it so status is fresh
-      if (restoredSelected) void loadJob(restoredSelected);
-
-      // Restore filters/sort/paging
-      setQuery(typeof restored.query === "string" ? restored.query : "");
-      setStatusFilter(
-        typeof restored.statusFilter === "string" ? restored.statusFilter : "ALL"
-      );
-      setTimeFilterMinutes(
-        typeof restored.timeFilterMinutes === "number"
-          ? restored.timeFilterMinutes
-          : -1
-      );
-      setSortKey(restored.sortKey === "created" ? "created" : "updated");
-      setSortDir(restored.sortDir === "asc" ? "asc" : "desc");
-      setPageIndex(typeof restored.pageIndex === "number" ? restored.pageIndex : 0);
-
-      // Restore small toggles
-      setLifecycleOpen(!!restored.lifecycleOpen);
-      setAdvancedOpen(!!restored.advancedOpen);
-
-      // Restore form drafts
-      setJobName(typeof restored.jobNameDraft === "string" ? restored.jobNameDraft : "");
-      setJobDescription(
-        typeof restored.jobDescriptionDraft === "string"
-          ? restored.jobDescriptionDraft
-          : ""
-      );
-
-      // Restore submit form choices
-      setSampleChoice(
-        typeof restored.sampleChoice === "string"
-          ? restored.sampleChoice
-          : SAMPLE_OPTIONS[0].value
-      );
-      setUseCustomSamples(!!restored.useCustomSamples);
-      setCustomSamples(
-        typeof restored.customSamples === "string" ? restored.customSamples : ""
-      );
-
-      // ✅ FIX: narrow persisted string into ModelPackageChoice
-      const restoredPkg = restored.modelPackageChoice;
-      setModelPackageChoice(
-        isModelPackageChoice(restoredPkg)
-          ? restoredPkg
-          : MODEL_PACKAGE_OPTIONS[0].value
-      );
-
-      setOutdirChoice(
-        typeof restored.outdirChoice === "string"
-          ? restored.outdirChoice
-          : OUTDIR_OPTIONS[0].value
-      );
-      setUseCustomOutdir(!!restored.useCustomOutdir);
-      setCustomOutdir(
-        typeof restored.customOutdir === "string" ? restored.customOutdir : ""
-      );
-
-      // display-only
-      setLocalFileName(
-        typeof restored.localFileName === "string" || restored.localFileName === null
-          ? restored.localFileName
-          : null
-      );
+    const cleanedUploaded: Record<string, UploadedFileInfo[]> = {};
+    for (const id of restoredJobIds) {
+      const files = uploadedRaw[id];
+      if (Array.isArray(files) && files.length > 0) {
+        cleanedUploaded[id] = files
+          .filter(Boolean)
+          .map((f: any) => ({
+            filename: String(f?.filename || ""),
+            s3_uri: String(f?.s3_uri || ""),
+          }))
+          .filter((f) => f.filename.length > 0);
+      }
     }
 
-    // Enable persistence only AFTER hydration has executed (prevents overwriting saved state)
-    setIsHydrated(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setJobUploadedFilesById(cleanedUploaded);
+
+    setSelectedJobId(restoredSelected);
+    if (restoredSelected) void loadJob(restoredSelected);
+
+    setQuery(typeof restored.query === "string" ? restored.query : "");
+    setStatusFilter(typeof restored.statusFilter === "string" ? restored.statusFilter : "ALL");
+    setTimeFilterMinutes(typeof restored.timeFilterMinutes === "number" ? restored.timeFilterMinutes : -1);
+    setSortKey(restored.sortKey === "created" ? "created" : "updated");
+    setSortDir(restored.sortDir === "asc" ? "asc" : "desc");
+    setPageIndex(typeof restored.pageIndex === "number" ? restored.pageIndex : 0);
+
+    setLifecycleOpen(!!restored.lifecycleOpen);
+    setAdvancedOpen(!!restored.advancedOpen);
+
+    setJobName(typeof restored.jobNameDraft === "string" ? restored.jobNameDraft : "");
+    setJobDescription(typeof restored.jobDescriptionDraft === "string" ? restored.jobDescriptionDraft : "");
+
+    setSampleChoice(typeof restored.sampleChoice === "string" ? restored.sampleChoice : SAMPLE_OPTIONS[0].value);
+    setUseCustomSamples(!!restored.useCustomSamples);
+    setCustomSamples(typeof restored.customSamples === "string" ? restored.customSamples : "");
+
+    const restoredPkg = restored.modelPackageChoice;
+    setModelPackageChoice(isModelPackageChoice(restoredPkg) ? restoredPkg : MODEL_PACKAGE_OPTIONS[0].value);
+
+    setOutdirChoice(typeof restored.outdirChoice === "string" ? restored.outdirChoice : OUTDIR_OPTIONS[0].value);
+    setUseCustomOutdir(!!restored.useCustomOutdir);
+    setCustomOutdir(typeof restored.customOutdir === "string" ? restored.customOutdir : "");
+
+    const restoredMode: GenomesInputMode =
+      restored.genomesMode === "upload" || restored.genomesMode === "preset"
+        ? restored.genomesMode
+        : Array.isArray(restored.localFileNames) && restored.localFileNames.length > 0
+        ? "upload"
+        : "preset";
+
+    setGenomesMode(restoredMode);
+
+    // Names only (live File objects cannot be restored)
+    setLocalFileNames(Array.isArray(restored.localFileNames) ? restored.localFileNames : []);
+
+    // Ensure no live files after reload
+    setHasLiveFiles(false);
+    setLocalFiles([null]);
+  }
+
+  setIsHydrated(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
 
   // ---------------------------
   // Persist to session (debounced)
@@ -1370,44 +1552,35 @@ function App() {
 
     persistTimerRef.current = window.setTimeout(() => {
       writePersistedState({
-        v: 1,
-
-        apiKey,
-
-        recentJobs,
-        jobMetaById,
-        jobInputsById,
-        jobModelPackageById,
-
-        checkedIds: Array.from(checkedIds),
-        selectedJobId,
-
-        query,
-        statusFilter,
-        timeFilterMinutes,
-        sortKey,
-        sortDir,
-        pageIndex,
-
-        lifecycleOpen,
-        advancedOpen,
-
-        jobNameDraft: jobName,
-        jobDescriptionDraft: jobDescription,
-
-        sampleChoice,
-        useCustomSamples,
-        customSamples,
-
-        // ModelPackageChoice is assignable to string here
-        modelPackageChoice,
-
-        outdirChoice,
-        useCustomOutdir,
-        customOutdir,
-
-        localFileName,
-      });
+          v: 3,
+          apiKey,
+          recentJobs,
+          jobMetaById,
+          jobInputsById,
+          jobModelPackageById,
+          jobUploadedFilesById, // ✅ ADD THIS
+          checkedIds: Array.from(checkedIds),
+          selectedJobId,
+          query,
+          statusFilter,
+          timeFilterMinutes,
+          sortKey,
+          sortDir,
+          pageIndex,
+          lifecycleOpen,
+          advancedOpen,
+          jobNameDraft: jobName,
+          jobDescriptionDraft: jobDescription,
+          sampleChoice,
+          useCustomSamples,
+          customSamples,
+          modelPackageChoice,
+          outdirChoice,
+          useCustomOutdir,
+          customOutdir,
+          genomesMode,
+        localFileNames,
+        });
     }, 250);
 
     return () => {
@@ -1420,6 +1593,7 @@ function App() {
     jobMetaById,
     jobInputsById,
     jobModelPackageById,
+    jobUploadedFilesById, // ✅ ADD THIS
     checkedIds,
     selectedJobId,
     query,
@@ -1439,7 +1613,8 @@ function App() {
     outdirChoice,
     useCustomOutdir,
     customOutdir,
-    localFileName,
+      genomesMode,
+  localFileNames,
   ]);
 
   const currentMeta = currentJob ? jobMetaById[currentJob.job_id] : undefined;
@@ -1451,69 +1626,73 @@ function App() {
   }, [outdirChoice]);
 
   const canDownloadHighlighted = normalizeStatus(currentJob?.status) === "SUCCEEDED";
-  const submitEnabled = jobName.trim().length > 0 && !isSubmitting;
 
-  function openSelectedJobInfo() {
-    if (!currentJob) return;
+  // ✅ changed: require API key too
+  const submitEnabled = jobName.trim().length > 0 && apiKey.trim().length > 0 && !isSubmitting;
 
-    const meta = jobMetaById[currentJob.job_id];
-    const inputs = jobInputsById[currentJob.job_id];
+function openSelectedJobInfo() {
+  if (!currentJob) return;
 
-    const pkgLabel =
-      jobModelPackageById[currentJob.job_id] ||
-      MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value].label;
+  const meta = jobMetaById[currentJob.job_id];
+  const inputs = jobInputsById[currentJob.job_id];
 
-    const nameLine = `Name: ${meta?.name || "— (not available)"}\n`;
-    const idLine = `Job ID: ${currentJob.job_id}\n`;
-    const descLine = `\nDescription:\n${meta?.description?.trim() || "—"}\n`;
+  const pkgLabel =
+    jobModelPackageById[currentJob.job_id] ||
+    MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value].label;
 
-    const advancedBlock =
-      `\nAdvanced settings (fixed for demo):\n` +
-      `• Min alignment identity: ${Math.round(
-        ADVANCED_DEFAULTS.min_alignment_identity * 100
-      )}%\n` +
-      `• Chunk size (samples): ${ADVANCED_DEFAULTS.chunk_size_samples}\n` +
-      `• Max branches: ${ADVANCED_DEFAULTS.max_branches}\n`;
+  const nameLine = `Name: ${meta?.name || "— (not available)"}\n`;
+  const idLine = `Job ID: ${currentJob.job_id}\n`;
+  const descLine = `\nDescription:\n${meta?.description?.trim() || "—"}\n`;
 
-    const inputsBlock = (() => {
-      if (inputs) {
-        return (
-          `\nInputs used for submission (this browser):\n` +
-          `• Samples: ${inputs.samples_uri}\n` +
-          `• Model package: ${pkgLabel}\n` +
-          `    - Reference: ${inputs.reference_fasta}\n` +
-          `    - Train feature matrix: ${inputs.train_feature_matrix}\n` +
-          `    - Model: ${inputs.model}\n` +
-          `    - Scaler: ${inputs.scaler}\n` +
-          `• Results folder: ${inputs.outdir}\n`
-        );
-      }
+  const advancedBlock =
+    `\nAdvanced settings (restricted to control cost & abuse):\n` +
+    `• Min alignment identity: ${Math.round(
+      ADVANCED_DEFAULTS.min_alignment_identity * 100
+    )}%\n` +
+    `• Chunk size (samples): ${ADVANCED_DEFAULTS.chunk_size_samples}\n` +
+    `• Max branches: ${ADVANCED_DEFAULTS.max_branches}\n`;
 
-      const pkg = MODEL_PACKAGES[MODEL_PACKAGE_OPTIONS[0].value];
+  const uploaded = jobUploadedFilesById[currentJob.job_id] || [];
 
+  const inputsBlock = (() => {
+    // If we don't have tracked inputs for this job in this browser:
+    if (!inputs) {
       return (
-        `\nInputs used for submission:\n` +
-        `— Not available (details are tracked only for jobs submitted in this browser.)\n` +
-        `\nModel package (demo default):\n` +
-        `• Model package: ${pkgLabel}\n` +
-        `    - Reference: ${pkg.reference_fasta}\n` +
-        `    - Train feature matrix: ${pkg.train_feature_matrix}\n` +
-        `    - Model: ${pkg.model}\n` +
-        `    - Scaler: ${pkg.scaler}\n`
+        `\nInputs:\n` +
+        `— Not available (inputs are tracked only for jobs submitted in this browser.)\n` +
+        `\nModel package:\n` +
+        `• ${pkgLabel}\n`
       );
-    })();
+    }
 
-    openModal(
-      "Job details",
-      nameLine + idLine + descLine + inputsBlock + advancedBlock
-    );
-  }
+    const isUploadJob = uploaded.length > 0;
+
+    const inputGenomesSection = isUploadJob
+      ? `\nInput genomes (${uploaded.length} file${uploaded.length === 1 ? "" : "s"}):\n` +
+        uploaded.map((f) => `• ${f.filename}\n`).join("")
+      : `\nInput genomes:\n• Preset (S3)\n`;
+
+    const modelSection =
+      `\nModel package:\n` +
+      `• ${pkgLabel}\n`;
+
+    const resultsSection =
+      `\nResults folder:\n` +
+      `• ${inputs.outdir}\n`;
+
+    // Minimal S3 detail line(s) at the bottom — keeps main view clean
+    const detailsSection = isUploadJob
+      ? `\nDetails (S3):\n• Samples prefix: ${inputs.samples_uri}\n`
+      : `\nDetails (S3):\n• Samples: ${inputs.samples_uri}\n`;
+
+    return inputGenomesSection + modelSection + resultsSection + detailsSection;
+  })();
+
+  openModal("Job details", nameLine + idLine + descLine + inputsBlock + advancedBlock);
+}
 
   function openLifecycleHelp() {
-    openModal(
-      "Status help",
-      "Hover any status pill to see what it means.\n\n✓ = succeeded\n⚠ = failed"
-    );
+    openModal("Status help", "Hover any status pill to see what it means.\n\n✓ = succeeded\n⚠ = failed");
   }
 
   function openTableInfo() {
@@ -1530,17 +1709,12 @@ function App() {
 
   // ✅ Download via API (needed because headers like x-api-key cannot be sent by <a href>)
   async function downloadZipViaApi(jobId: string) {
-    const resp = await fetch(
-      `${API_BASE}/results/${encodeURIComponent(jobId)}/zip`,
-      {
-        method: "GET",
-        headers: withApiKeyHeaders(apiKey, { Accept: "application/zip" }),
-      }
-    );
+    const resp = await fetch(`${API_BASE}/results/${encodeURIComponent(jobId)}/zip`, {
+      method: "GET",
+      headers: withApiKeyHeaders(apiKey, { Accept: "application/zip" }),
+    });
 
-    if (!resp.ok) {
-      throw new Error(await readErrorMessage(resp));
-    }
+    if (!resp.ok) throw new Error(await readErrorMessage(resp));
 
     const blob = await resp.blob();
     const blobUrl = URL.createObjectURL(blob);
@@ -1555,88 +1729,245 @@ function App() {
     URL.revokeObjectURL(blobUrl);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitError(null);
-    setSubmitInfo(null);
+async function handleSubmit(e: React.FormEvent) {
+  e.preventDefault();
+  setSubmitError(null);
+  setSubmitInfo(null);
 
-    if (!jobName.trim()) {
-      setSubmitError("Please enter a job name.");
-      return;
-    }
-    if (!effectiveSamples || !effectiveSamples.startsWith("s3://")) {
-      setSubmitError("Input genomes must be an s3:// path.");
-      return;
-    }
-    if (!effectiveOutdir || !effectiveOutdir.startsWith("s3://")) {
-      setSubmitError("Results folder must be an s3:// path.");
-      return;
-    }
+  if (!jobName.trim()) {
+    setSubmitError("Please enter a job name.");
+    return;
+  }
 
-    const payload: SubmitPayload = {
-      samples_uri: effectiveSamples,
-      reference_fasta: referenceChoice,
-      train_feature_matrix: featureMatrixChoice,
-      model: modelChoice,
-      scaler: scalerChoice,
-      outdir: effectiveOutdir,
-    };
+  if (!apiKey.trim()) {
+    setSubmitError("Please enter an API key.");
+    return;
+  }
+
+  if (!effectiveOutdir || !effectiveOutdir.startsWith("s3://")) {
+    setSubmitError("Results folder must be an s3:// path.");
+    return;
+  }
+
+  const useLocalUpload = genomesMode === "upload";
+  const filesToUpload = localFiles.filter(Boolean) as File[];
+
+    // If NOT uploading locally, keep existing S3 samples validation
+        if (useLocalUpload) {
+          const missingRows = localFiles
+            .map((f, idx) => (f ? null : idx + 1))
+            .filter((x): x is number => x !== null);
+
+          const selectedCount = localFiles.filter(Boolean).length;
+
+          if (selectedCount === 0) {
+            setSubmitError("Please choose at least one file.");
+            return;
+          }
+
+          // If you added extra rows, require every row to be populated
+          if (missingRows.length > 0) {
+            setSubmitError(
+              `Please choose a file for each row (missing: ${missingRows.join(
+                ", "
+              )}), or remove the empty row(s).`
+            );
+            return;
+          }
+        } else {
+          if (!effectiveSamples || !effectiveSamples.startsWith("s3://")) {
+            setSubmitError("Input genomes must be an s3:// path.");
+            return;
+          }
+        }
+
 
     setIsSubmitting(true);
+
     try {
-      const resp = await fetch(`${API_BASE}/submit`, {
-        method: "POST",
-        headers: withApiKeyHeaders(apiKey, {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        }),
-        body: JSON.stringify(payload),
-      });
-
-      if (!resp.ok) throw new Error(await readErrorMessage(resp));
-      const data = await resp.json();
-
-      const jobId = data.job_id as string;
       const nowIso = new Date().toISOString();
 
-      setJobMetaById((prev) => ({
-        ...prev,
-        [jobId]: { name: jobName.trim(), description: jobDescription.trim() },
-      }));
-      setJobInputsById((prev) => ({ ...prev, [jobId]: payload }));
-      setJobModelPackageById((prev) => ({
-        ...prev,
-        [jobId]: selectedModelPackage.label,
-      }));
+      // ----------------------------
+      // PATH A: existing S3 samples
+      // ----------------------------
+      if (!useLocalUpload) {
+        const payload: SubmitPayload = {
+          samples_uri: effectiveSamples,
+          reference_fasta: referenceChoice,
+          train_feature_matrix: featureMatrixChoice,
+          model: modelChoice,
+          scaler: scalerChoice,
+          outdir: effectiveOutdir,
+        };
 
-      const initial: JobStatus = {
-        job_id: jobId,
-        status: data.status || "SUBMITTED",
-        created_at: data.created_at || nowIso,
-        updated_at: data.updated_at || nowIso,
-        batch_job_id: data.batch_job_id,
-      };
+        const resp = await fetch(`${API_BASE}/submit`, {
+          method: "POST",
+          headers: withApiKeyHeaders(apiKey, {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          }),
+          body: JSON.stringify(payload),
+        });
 
-      setCurrentJob(initial);
-      setSelectedJobId(jobId);
-      upsertRecentJobStable(initial);
+        if (!resp.ok) throw new Error(await readErrorMessage(resp));
+        const data = await resp.json();
 
-      setSubmitInfo(`Submitted job. Job ID: ${jobId}`);
+        const jobId = data.job_id as string;
 
-      setQuery("");
-      if (
-        statusFilter !== "ALL" &&
-        statusFilter !== normalizeStatus(initial.status)
-      ) {
-        setStatusFilter("ALL");
+        setJobMetaById((prev) => ({
+          ...prev,
+          [jobId]: { name: jobName.trim(), description: jobDescription.trim() },
+        }));
+        setJobInputsById((prev) => ({ ...prev, [jobId]: payload }));
+        setJobModelPackageById((prev) => ({ ...prev, [jobId]: selectedModelPackage.label }));
+
+        const initial: JobStatus = {
+          job_id: jobId,
+          status: data.status || "SUBMITTED",
+          created_at: data.created_at || nowIso,
+          updated_at: data.updated_at || nowIso,
+          batch_job_id: data.batch_job_id,
+        };
+
+        setCurrentJob(initial);
+        setSelectedJobId(jobId);
+        upsertRecentJobStable(initial);
+
+        setSubmitInfo(`Submitted job. Job ID: ${jobId}`);
+
+        setQuery("");
+        if (statusFilter !== "ALL" && statusFilter !== normalizeStatus(initial.status)) {
+          setStatusFilter("ALL");
+        }
+
+        setJobName("");
+        setJobDescription("");
+        clearLocalUploads();
+
+        void loadJob(jobId);
+        return;
       }
 
-      setJobName("");
-      setJobDescription("");
-      setLocalFileName(null);
-      setHasLiveFile(false);
+        // ----------------------------
+        // PATH B: Local upload → init → S3 POSTs → finalize
+        // ----------------------------
+        const files = filesToUpload;
 
-      void loadJob(jobId);
+        // quick client-side extension check (backend enforces too)
+        for (const f of files) {
+          const lower = f.name.toLowerCase();
+          const okExt = [".fa", ".fasta", ".fna", ".txt"].some((x) => lower.endsWith(x));
+          if (!DEMO_LOCK_CUSTOM_S3 && !okExt) {
+            throw new Error("Local upload must be a FASTA-like file (.fa, .fasta, .fna, .txt).");
+          }
+        }
+
+        setSubmitInfo("Initializing upload…");
+
+        const initPayload = {
+          phase: "init",
+          reference_fasta: referenceChoice,
+          train_feature_matrix: featureMatrixChoice,
+          model: modelChoice,
+          scaler: scalerChoice,
+          outdir: effectiveOutdir,
+          files: files.map((f) => ({
+            filename: f.name,
+            content_type: (f.type && f.type.trim()) ? f.type : "text/plain",
+            size_bytes: f.size,
+          })),
+        };
+
+        const initResp = await fetch(`${API_BASE}/submit`, {
+          method: "POST",
+          headers: withApiKeyHeaders(apiKey, {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          }),
+          body: JSON.stringify(initPayload),
+        });
+
+        if (!initResp.ok) throw new Error(await readErrorMessage(initResp));
+        const initData = (await initResp.json()) as InitUploadResponse;
+
+        const jobId = initData.job_id;
+
+        setJobUploadedFilesById((prev) => ({
+          ...prev,
+          [jobId]: (initData.files || []).map((f) => ({
+            filename: f.filename,
+            s3_uri: f.s3_uri,
+          })),
+        }));
+
+        if (!Array.isArray(initData.files) || initData.files.length !== files.length) {
+          throw new Error(
+            `Upload init mismatch: expected ${files.length} file(s), got ${initData.files?.length ?? 0}.`
+          );
+        }
+
+        setSubmitInfo(`Uploading ${files.length} file(s) to S3…`);
+
+        for (let i = 0; i < files.length; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          await uploadViaPresignedPost(files[i], initData.files[i].post);
+        }
+
+        setSubmitInfo("Finalizing submission…");
+        const finResp = await fetch(`${API_BASE}/submit`, {
+          method: "POST",
+          headers: withApiKeyHeaders(apiKey, {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          }),
+          body: JSON.stringify({ phase: "finalize", job_id: jobId }),
+        });
+
+        if (!finResp.ok) throw new Error(await readErrorMessage(finResp));
+        const finData = (await finResp.json()) as FinalizeResponse;
+
+        const payloadForUI: SubmitPayload = {
+          samples_uri:
+            finData.samples_uri || `s3://${initData.upload_bucket}/${initData.upload_prefix}*`,
+          reference_fasta: referenceChoice,
+          train_feature_matrix: featureMatrixChoice,
+          model: modelChoice,
+          scaler: scalerChoice,
+          outdir: effectiveOutdir,
+        };
+
+        setJobMetaById((prev) => ({
+          ...prev,
+          [jobId]: { name: jobName.trim(), description: jobDescription.trim() },
+        }));
+        setJobInputsById((prev) => ({ ...prev, [jobId]: payloadForUI }));
+        setJobModelPackageById((prev) => ({ ...prev, [jobId]: selectedModelPackage.label }));
+
+        const initial: JobStatus = {
+          job_id: jobId,
+          status: finData.status || "SUBMITTED",
+          created_at: nowIso,
+          updated_at: nowIso,
+          batch_job_id: finData.batch_job_id,
+        };
+
+        setCurrentJob(initial);
+        setSelectedJobId(jobId);
+        upsertRecentJobStable(initial);
+
+        setSubmitInfo(`Submitted job. Job ID: ${jobId}`);
+
+        setQuery("");
+        if (statusFilter !== "ALL" && statusFilter !== normalizeStatus(initial.status)) {
+          setStatusFilter("ALL");
+        }
+
+        setJobName("");
+        setJobDescription("");
+        clearLocalUploads();
+
+        void loadJob(jobId);
+
     } catch (err: any) {
       setSubmitError(err.message || "Failed to submit job");
     } finally {
@@ -1651,7 +1982,6 @@ function App() {
         triggerDownload(job.download_url);
         return;
       }
-      // Otherwise hit API endpoint with x-api-key header
       await downloadZipViaApi(job.job_id);
     } catch (err: any) {
       openModal("Download failed", err?.message || "Failed to download results.");
@@ -1688,10 +2018,7 @@ function App() {
   async function downloadMany(jobs: JobStatus[], cap = DOWNLOAD_CAP) {
     const succeeded = jobs.filter((j) => normalizeStatus(j.status) === "SUCCEEDED");
     if (succeeded.length === 0) {
-      openModal(
-        "No downloadable jobs selected",
-        "Only jobs with status SUCCEEDED can be downloaded."
-      );
+      openModal("No downloadable jobs selected", "Only jobs with status SUCCEEDED can be downloaded.");
       return;
     }
 
@@ -1709,9 +2036,7 @@ function App() {
     if (succeeded.length > cap) {
       openModal(
         "Downloads started",
-        `Opened ${cap} downloads.\n\n${
-          succeeded.length - cap
-        } more were not opened to avoid browser blocking.`
+        `Opened ${cap} downloads.\n\n${succeeded.length - cap} more were not opened to avoid browser blocking.`
       );
     }
   }
@@ -1745,7 +2070,6 @@ function App() {
     }
   }
 
-  // selection helpers
   function toggleChecked(id: string) {
     setCheckedIds((prev) => {
       const next = new Set(prev);
@@ -1770,7 +2094,6 @@ function App() {
     setCheckedIds(new Set());
   }
 
-  // filtering/sorting
   const availableStatuses = useMemo(() => {
     const set = new Set<string>();
     for (const j of recentJobs) set.add(normalizeStatus(j.status));
@@ -1840,7 +2163,6 @@ function App() {
     return filteredJobs.slice(start, start + PAGE_SIZE);
   }, [filteredJobs, safePageIndex]);
 
-  // If nothing highlighted but we have rows, highlight the first row in the table
   const firstRowId = pagedJobs[0]?.job_id || "";
   useEffect(() => {
     if (selectedJobId) return;
@@ -1932,10 +2254,7 @@ function App() {
   });
 
   // Table sizing to avoid horizontal scroll
-  const tableWrapperStyle: React.CSSProperties = {
-    width: "100%",
-    overflowX: "hidden",
-  };
+  const tableWrapperStyle: React.CSSProperties = { width: "100%", overflowX: "hidden" };
 
   const tableStyle: React.CSSProperties = {
     width: "100%",
@@ -1960,7 +2279,6 @@ function App() {
     verticalAlign: "middle",
   };
 
-  // checkbox column should never ellipsis/clip
   const checkboxThStyle: React.CSSProperties = {
     ...thStyle,
     padding: "8px 6px",
@@ -2021,9 +2339,7 @@ function App() {
 
   async function pollIds(ids: string[]) {
     if (ids.length === 0) return;
-    const results = await Promise.allSettled(
-      ids.map((id) => fetchJobStatus(id, apiKey))
-    );
+    const results = await Promise.allSettled(ids.map((id) => fetchJobStatus(id, apiKey)));
     for (const r of results) {
       if (r.status !== "fulfilled") continue;
       const job = r.value;
@@ -2118,36 +2434,30 @@ function App() {
   const selectedIsOnThisPage = useMemo(() => {
     if (selectedIndexInFiltered < 0) return false;
     const start = safePageIndex * PAGE_SIZE;
-    return (
-      selectedIndexInFiltered >= start &&
-      selectedIndexInFiltered < start + PAGE_SIZE
-    );
+    return selectedIndexInFiltered >= start && selectedIndexInFiltered < start + PAGE_SIZE;
   }, [selectedIndexInFiltered, safePageIndex]);
 
   useEffect(() => {
     if (!selectedJobId) return;
     if (!selectedIsOnThisPage) return;
-    const el = document.querySelector(
-      `[data-rowid="${CSS.escape(selectedJobId)}"]`
-    ) as HTMLElement | null;
+    const el = document.querySelector(`[data-rowid="${CSS.escape(selectedJobId)}"]`) as HTMLElement | null;
     if (!el) return;
     setTimeout(() => {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
     }, 0);
   }, [selectedJobId, selectedIsOnThisPage, safePageIndex]);
 
-  // header checkbox: select page
   const pageRowIds = useMemo(() => pagedJobs.map((j) => j.job_id), [pagedJobs]);
 
-  const allOnPageChecked = useMemo(() => {
-    return pageRowIds.length > 0 && pageRowIds.every((id) => checkedIds.has(id));
-  }, [pageRowIds, checkedIds]);
+  const allOnPageChecked = useMemo(
+    () => pageRowIds.length > 0 && pageRowIds.every((id) => checkedIds.has(id)),
+    [pageRowIds, checkedIds]
+  );
 
-  const someOnPageChecked = useMemo(() => {
-    return (
-      pageRowIds.some((id) => checkedIds.has(id)) && !allOnPageChecked
-    );
-  }, [pageRowIds, checkedIds, allOnPageChecked]);
+  const someOnPageChecked = useMemo(
+    () => pageRowIds.some((id) => checkedIds.has(id)) && !allOnPageChecked,
+    [pageRowIds, checkedIds, allOnPageChecked]
+  );
 
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -2155,12 +2465,10 @@ function App() {
     headerCheckboxRef.current.indeterminate = someOnPageChecked;
   }, [someOnPageChecked]);
 
-  // counts for button labels
   const selectedCount = checkedIds.size;
   const downloadableCount = checkedSucceeded.length;
   const deletableCount = checkedCompleted.length;
 
-  // Clear filters disabled state
   const filtersApplied =
     query.trim().length > 0 ||
     statusFilter !== "ALL" ||
@@ -2168,7 +2476,6 @@ function App() {
     sortKey !== "updated" ||
     sortDir !== "desc";
 
-  // UI render helpers
   const arrowButtonStyle = (disabled: boolean): React.CSSProperties => ({
     width: 30,
     height: 26,
@@ -2222,432 +2529,661 @@ function App() {
   return (
     <div style={pageStyle}>
       <div style={shellStyle}>
-        <header style={{ marginBottom: 18 }}>
-          <h1
-            style={{
-              fontSize: "26px",
-              fontWeight: 700,
-              color: "#0f172a",
-              margin: 0,
-            }}
+        <header style={{marginBottom: 18}}>
+          <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
           >
-            COVID-19 CFR Prediction Console (Demo)
-          </h1>
-          <p style={{ marginTop: 6, fontSize: "12px", color: "#64748b" }}>
-            Run case-fatality rate (CFR) prediction jobs on SARS-CoV-2 genomes, track statuses live, and download results.
-          </p>
+            <div style={{minWidth: 0}}>
+              <h1 style={{fontSize: "26px", fontWeight: 700, color: "#0f172a", margin: 0}}>
+                COVID-19 CFR Prediction Console (Gated Access)
+              </h1>
+
+              <p style={{marginTop: 6, fontSize: "12px", color: "#64748b"}}>
+                Run case-fatality rate (CFR) prediction jobs on SARS-CoV-2 genomes, track statuses live, and download
+                results.
+              </p>
+            </div>
+
+            <div
+                style={{
+                  fontSize: 11,
+                  color: "#64748b",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  whiteSpace: "nowrap",
+                }}
+            >
+              <span style={{fontWeight: 700, color: "#334155"}}>Links:</span>
+
+              <a
+                  href="mailto:achandrasek6@gmail.com"
+                  style={{color: "#2563eb", textDecoration: "none", fontWeight: 700}}
+              >
+                Email
+              </a>
+
+              <a
+                  href="https://www.linkedin.com/in/aravind-chandrasekaran-254793118/"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{color: "#2563eb", textDecoration: "none", fontWeight: 700}}
+              >
+                LinkedIn
+              </a>
+
+              <a
+                  href="https://github.com/achandrasek6"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{color: "#2563eb", textDecoration: "none", fontWeight: 700}}
+              >
+                GitHub
+              </a>
+            </div>
+          </div>
         </header>
+
 
         <div style={gridStyle}>
           {/* LEFT CARD */}
           <section style={cardStyle}>
-            <h2
-              style={{
-                fontSize: "15px",
-                fontWeight: 700,
-                color: "#0f172a",
-                margin: 0,
-                marginBottom: 12,
-              }}
-            >
+            <h2 style={{fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: 0, marginBottom: 12}}>
               1. Submit a new job
             </h2>
 
-            <form
-              onSubmit={handleSubmit}
-              style={{ display: "flex", flexDirection: "column", gap: 14 }}
-            >
+            <form onSubmit={handleSubmit} style={{display: "flex", flexDirection: "column", gap: 14}}>
+              {/* Job name */}
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>
-                    Job name <span style={{ color: "#b91c1c" }}>*</span>
+                    Job name <span style={{color: "#b91c1c"}}>*</span>
                   </label>
                   <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Job name",
-                        "Required. This is the human-friendly label shown to identify your run."
-                      )
-                    }
-                    title="Job name info"
-                    hoverText="Human-friendly label for this run."
+                      onOpen={() =>
+                          openModal(
+                              "Job name",
+                              "Required. This is the human-friendly label shown to identify your run."
+                          )
+                      }
+                      title="Job name info"
+                      hoverText="Human-friendly label for this run."
                   />
                 </div>
                 <input
-                  style={inputStyle}
-                  placeholder="e.g., Multi-file demo"
-                  value={jobName}
-                  maxLength={JOB_NAME_MAX}
-                  onChange={(e) => setJobName(e.target.value.slice(0, JOB_NAME_MAX))}
+                    style={inputStyle}
+                    placeholder="e.g., Multi-file demo"
+                    value={jobName}
+                    maxLength={JOB_NAME_MAX}
+                    onChange={(e) => setJobName(e.target.value.slice(0, JOB_NAME_MAX))}
                 />
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
+                <div style={{fontSize: 10, color: "#94a3b8", marginTop: 4}}>
                   {jobName.length}/{JOB_NAME_MAX}
                 </div>
               </div>
 
+              {/* Job description */}
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>Job description (optional)</label>
                   <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Job description",
-                        "Optional. A short note shown in this website for quick context (not sent to the backend)."
-                      )
-                    }
-                    title="Job description info"
-                    hoverText="Optional note shown in this UI."
+                      onOpen={() =>
+                          openModal(
+                              "Job description",
+                              "Optional. A short note shown in this website for quick context (not sent to the backend)."
+                          )
+                      }
+                      title="Job description info"
+                      hoverText="Optional note shown in this UI."
                   />
                 </div>
                 <textarea
-                  style={textAreaStyle}
-                  placeholder="Example: “Demonstrates multi-file inputs and rejected records.”"
-                  value={jobDescription}
-                  maxLength={JOB_DESC_MAX}
-                  onChange={(e) =>
-                    setJobDescription(e.target.value.slice(0, JOB_DESC_MAX))
-                  }
+                    style={textAreaStyle}
+                    placeholder="Example: “Demonstrates multi-file inputs and rejected records.”"
+                    value={jobDescription}
+                    maxLength={JOB_DESC_MAX}
+                    onChange={(e) => setJobDescription(e.target.value.slice(0, JOB_DESC_MAX))}
                 />
-                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
+                <div style={{fontSize: 10, color: "#94a3b8", marginTop: 4}}>
                   {jobDescription.length}/{JOB_DESC_MAX}
                 </div>
               </div>
 
+              {/* Input genomes (Preset vs Upload — mutually exclusive) */}
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>Input genomes</label>
                   <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Input genomes",
-                        "SARS-CoV-2 genomes in FASTA format. The workflow validates input, runs predictions, and writes results to the configured results folder."
-                      )
-                    }
-                    title="Input genomes info"
-                    hoverText="Choose a demo or enter an s3:// FASTA path."
-                  />
-                </div>
-
-                <select
-                  style={selectStyle}
-                  value={sampleChoice}
-                  onChange={(e) => setSampleChoice(e.target.value)}
-                  disabled={useCustomSamples && !DEMO_LOCK_CUSTOM_S3}
-                >
-                  {SAMPLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-
-                {selectedSampleHint && (
-                  <p style={{ ...helperStyle, marginTop: 6 }}>{selectedSampleHint}</p>
-                )}
-
-                <div
-                  style={{
-                    marginTop: 6,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: "11px",
-                    color: "#64748b",
-                  }}
-                >
-                  <input
-                    id="customSamples"
-                    type="checkbox"
-                    checked={useCustomSamples}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setUseCustomSamples(checked);
-                      if (checked) {
-                        setCustomSamples((prev) => (prev.trim() ? prev : sampleChoice));
+                      onOpen={() =>
+                          openModal(
+                              "Input genomes",
+                              "Choose either a preset demo input (S3) OR upload local FASTA files (up to 5).\n\nOnly one mode may be selected at a time."
+                          )
                       }
+                      title="Input genomes info"
+                      hoverText="Preset S3 input or local upload (exclusive)."
+                  />
+                </div>
+
+                {/* checkbox-like radio toggles */}
+                <div
+                    style={{
+                      marginTop: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      fontSize: "11px",
+                      color: "#64748b",
+                      flexWrap: "wrap",
                     }}
-                    aria-label="Use custom S3 path for input genomes"
-                  />
+                >
+                  <TipWrap text="Use one of the built-in demo inputs already stored in S3. No local upload required.">
+                    <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          cursor: "pointer",
+                        }}
+                    >
+                      <input
+                          type="checkbox"
+                          checked={genomesMode === "preset"}
+                          onChange={() => setModeExclusive("preset")}
+                          aria-label="Use preset (S3) input genomes"
+                      />
+                      Preset (S3 demo input)
+                    </label>
+                  </TipWrap>
 
-                  {DEMO_LOCK_CUSTOM_S3 ? (
-                    <HoverTip text="Shown for realism. Custom S3 paths are locked in this demo build.">
-                      <label htmlFor="customSamples" style={{ cursor: "help" }}>
-                        Use custom S3 path
-                      </label>
-                    </HoverTip>
-                  ) : (
-                    <label htmlFor="customSamples">Use custom S3 path</label>
-                  )}
-                </div>
-
-                {useCustomSamples && (
-                  <div style={{ marginTop: 6 }}>
-                    {DEMO_LOCK_CUSTOM_S3 ? (
-                      <HoverTip
-                        text="Demo mode: custom S3 paths are locked. The dropdown still controls the selected input."
-                        block
-                      >
-                        <input style={lockedFieldStyle} value={sampleChoice} disabled readOnly />
-                      </HoverTip>
-                    ) : (
-                      <TipWrap text="Custom S3 FASTA path (or glob)." block>
-                        <input
-                          style={inputStyle}
-                          placeholder="s3://bucket/path/to/your_samples.fasta (or pattern)"
-                          value={customSamples}
-                          maxLength={URI_MAX}
-                          onChange={(e) => setCustomSamples(e.target.value.slice(0, URI_MAX))}
-                        />
-                      </TipWrap>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div style={labelRowStyle}>
-                  <label style={labelStyle}>Upload local file (optional)</label>
-                  <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Local upload (demo note)",
-                        "This control illustrates a realistic product UI. In this demo build, local upload is not connected to the backend."
-                      )
-                    }
-                    title="Local upload info"
-                    hoverText="UI-only demo (not connected to backend yet)."
-                  />
-                </div>
-
-                <div style={{ marginTop: 6 }}>
-                  <TipWrap text="UI-only demo: file is not uploaded to the backend yet." block>
-                    <input
-                      type="file"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        setLocalFileName(file ? file.name : null);
-                        setHasLiveFile(!!file);
-                      }}
-                      style={{ fontSize: "11px" }}
-                      aria-label="Select a local FASTA file (demo only)"
-                    />
+                  <TipWrap
+                      text="Upload up to 5 local FASTA-like files. They will be uploaded to S3, then submitted as the job input.">
+                    <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          cursor: "pointer",
+                        }}
+                    >
+                      <input
+                          type="checkbox"
+                          checked={genomesMode === "upload"}
+                          onChange={() => setModeExclusive("upload")}
+                          aria-label="Upload local input genomes"
+                      />
+                      Upload local files (up to 5)
+                    </label>
                   </TipWrap>
                 </div>
 
-                {localFileName && (
-                  <p style={{ ...helperStyle, marginTop: 6 }}>
-                    Selected: {localFileName}
-                  </p>
-                )}
+                {/* PRESET MODE */}
+                {genomesMode === "preset" ? (
+                    <>
+                      <select
+                          style={selectStyle}
+                          value={sampleChoice}
+                          onChange={(e) => setSampleChoice(e.target.value)}
+                          disabled={useCustomSamples && !DEMO_LOCK_CUSTOM_S3}
+                      >
+                        {SAMPLE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                        ))}
+                      </select>
 
-                {localFileName && !hasLiveFile && (
-                  <p style={{ ...helperStyle, marginTop: 4, color: "#94a3b8" }}>
-                    Note: after a reload, browsers do not keep the file attached. Please reselect the file to use it.
-                  </p>
-                )}
+                      {selectedSampleHint && (
+                          <p style={{...helperStyle, marginTop: 6}}>{selectedSampleHint}</p>
+                      )}
+
+                      <div
+                          style={{
+                            marginTop: 6,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: "11px",
+                            color: "#64748b",
+                          }}
+                      >
+                        <input
+                            id="customSamples"
+                            type="checkbox"
+                            checked={useCustomSamples}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setUseCustomSamples(checked);
+                              if (checked) setCustomSamples((prev) => (prev.trim() ? prev : sampleChoice));
+                            }}
+                            aria-label="Use custom S3 path for input genomes"
+                        />
+
+                        {DEMO_LOCK_CUSTOM_S3 ? (
+                            <HoverTip
+                                text="Not configurable yet. Contact the owner if you need custom S3 inputs enabled.">
+                              <label htmlFor="customSamples" style={{cursor: "help"}}>
+                                Use custom S3 path
+                              </label>
+                            </HoverTip>
+                        ) : (
+                            <label htmlFor="customSamples">Use custom S3 path</label>
+                        )}
+                      </div>
+
+                      {useCustomSamples && (
+                          <div style={{marginTop: 6}}>
+                            {DEMO_LOCK_CUSTOM_S3 ? (
+                                <HoverTip
+                                    text="This field is currently read-only. Preset inputs are enabled; custom inputs may be enabled on request."
+                                    block
+                                >
+                                  <input style={lockedFieldStyle} value={sampleChoice} disabled readOnly/>
+                                </HoverTip>
+                            ) : (
+                                <TipWrap text="Custom S3 FASTA path (or glob)." block>
+                                  <input
+                                      style={inputStyle}
+                                      placeholder="s3://bucket/path/to/your_samples.fasta (or pattern)"
+                                      value={customSamples}
+                                      maxLength={URI_MAX}
+                                      onChange={(e) => setCustomSamples(e.target.value.slice(0, URI_MAX))}
+                                  />
+                                </TipWrap>
+                            )}
+                          </div>
+                      )}
+                    </>
+                ) : null}
+
+                {/* UPLOAD MODE */}
+                {genomesMode === "upload" ? (
+                    <div style={{marginTop: 10}}>
+                      {(() => {
+                        const addDisabled = localFiles.length >= MAX_LOCAL_FILES;
+
+                        const anySelected = localFiles.some(Boolean);
+                        const clearEnabled = localFiles.length > 1 || anySelected;
+
+                        const addStyle: React.CSSProperties = {
+                          ...pillPrimary,
+                          opacity: addDisabled ? 0.5 : 1,
+                          cursor: addDisabled ? "not-allowed" : "pointer",
+                        }; // ✅ <-- this semicolon is the key
+
+                        const clearStyle: React.CSSProperties = {
+                          ...pillWhite,
+                          opacity: clearEnabled ? 1 : 0.5,
+                          cursor: clearEnabled ? "pointer" : "not-allowed",
+                        };
+
+                        return (
+                            <>
+                              <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 10,
+                                  }}
+                              >
+                                <div style={{fontSize: 11, color: "#64748b"}}>
+                                  Attach 1–5 FASTA-like files (.fa, .fasta, .fna, .txt).
+                                </div>
+
+                                <TipWrap
+                                    text={
+                                      addDisabled
+                                          ? `Max ${MAX_LOCAL_FILES} files reached. Remove one to add another.`
+                                          : "Add another file input row."
+                                    }
+                                >
+                                  <button
+                                      type="button"
+                                      onClick={addLocalFileSlot}
+                                      disabled={addDisabled}
+                                      style={addStyle}
+                                      aria-label="Add another file input"
+                                  >
+                                    + Add file
+                                  </button>
+                                </TipWrap>
+                              </div>
+
+                              <div
+                                  style={{
+                                    marginTop: 8,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 8,
+                                  }}
+                              >
+                                {localFiles.map((file, idx) => {
+                                  const hasFile = !!file;
+
+                                  return (
+                                      <div
+                                          key={idx}
+                                          style={{display: "flex", alignItems: "center", gap: 8}}
+                                      >
+                                        {/* Hidden real input (no TipWrap, no title) */}
+                                        <input
+                                            ref={(el) => {
+                                              localFileInputRefs.current[idx] = el;
+                                            }}
+                                            type="file"
+                                            onChange={(e) => {
+                                              const f = e.target.files?.[0] || null;
+                                              updateLocalFileAt(idx, f);
+                                            }}
+                                            style={{display: "none"}}
+                                            aria-label={`Select local FASTA file ${idx + 1}`}
+                                        />
+
+                                        {/* Visible "Choose file" pill (no custom tooltip) */}
+                                        <TipWrap
+                                            text={
+                                              hasFile
+                                                  ? `Selected: ${file!.name}`
+                                                  : "Choose a local FASTA-like file (.fa, .fasta, .fna, .txt)."
+                                            }
+                                        >
+                                          <button
+                                              type="button"
+                                              onClick={() => localFileInputRefs.current[idx]?.click()}
+                                              style={hasFile ? pillChooseFileSelected : pillChooseFile}
+                                              aria-label={`Choose local FASTA file ${idx + 1}`}
+                                          >
+                        <span
+                            style={{
+                              display: "inline-block",
+                              maxWidth: 360,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              verticalAlign: "bottom",
+                            }}
+                        >
+                          {hasFile ? `✓ ${file!.name}` : "Choose file"}
+                        </span>
+                                          </button>
+                                        </TipWrap>
+
+                                        {localFiles.length > 1 ? (
+                                            <TipWrap text="Remove this file input row.">
+                                              <button
+                                                  type="button"
+                                                  onClick={() => removeLocalFileSlot(idx)}
+                                                  style={pillIconDanger}
+                                                  aria-label={`Remove file input ${idx + 1}`}
+                                              >
+                                                ×
+                                              </button>
+                                            </TipWrap>
+                                        ) : null}
+                                      </div>
+                                  );
+                                })}
+                              </div>
+
+                              {localFileNames.length > 0 ? (
+                                  <div style={{marginTop: 8, fontSize: 11, color: "#475569"}}>
+                                    <div style={{fontWeight: 800, color: "#0f172a"}}>Selected:</div>
+                                    <ul style={{margin: "6px 0 0", paddingLeft: 18}}>
+                                      {localFileNames.slice(0, 5).map((n) => (
+                                          <li key={n} style={{wordBreak: "break-word"}}>
+                                            {n}
+                                          </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                              ) : (
+                                  <p style={{...helperStyle, marginTop: 8}}>No files selected yet.</p>
+                              )}
+
+                              {localFileNames.length > 0 && !hasLiveFiles ? (
+                                  <p style={{...helperStyle, marginTop: 6, color: "#94a3b8"}}>
+                                    Note: after a reload, browsers do not keep files attached. Please
+                                    reselect the file(s) to upload.
+                                  </p>
+                              ) : null}
+
+                              <div
+                                  style={{
+                                    marginTop: 8,
+                                    display: "flex",
+                                    gap: 8,
+                                    alignItems: "center",
+                                  }}
+                              >
+                                <TipWrap
+                                    text={
+                                      clearEnabled
+                                          ? "Clear files and reset to a single empty row."
+                                          : "Nothing to clear."
+                                    }
+                                >
+                                  <button
+                                      type="button"
+                                      onClick={clearLocalUploads}
+                                      disabled={!clearEnabled}
+                                      style={clearStyle}
+                                      aria-label="Clear all selected files"
+                                  >
+                                    Clear files
+                                  </button>
+                                </TipWrap>
+
+                                <span style={{fontSize: 11, color: "#94a3b8"}}>
+                      {localFiles.filter(Boolean).length}/{MAX_LOCAL_FILES} selected
+                    </span>
+                              </div>
+                            </>
+                        );
+                      })()}
+                    </div>
+                ) : null}
               </div>
+
 
               {/* Bundled model package */}
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>Model package</label>
                   <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Model package",
-                        "A bundled, versioned set of artifacts that must stay together (reference + training feature matrix + model + scaler).\n\nThis demo keeps them fixed to avoid incompatible combinations."
-                      )
-                    }
-                    title="Model package info"
-                    hoverText="Bundled artifacts (fixed for demo)."
+                      onOpen={() =>
+                          openModal(
+                              "Model package",
+                              "A bundled, versioned set of artifacts that must stay together (reference + training feature matrix + model + scaler).\n\nOnly the stable package is available right now; additional versions may be added."
+                          )
+                      }
+                      title="Model package info"
+                      hoverText="Bundled artifacts (Pinned artifact)."
                   />
                 </div>
 
                 {MODEL_PACKAGE_OPTIONS.length <= 1 ? (
-                  renderFixedField(selectedModelPackage.label, "Fixed for demo")
+                    renderFixedField(selectedModelPackage.label, "Pinned artifact")
                 ) : (
-                  <select
-                    style={selectStyle}
-                    value={modelPackageChoice}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      // ✅ FIX: narrow string -> ModelPackageChoice
-                      if (isModelPackageChoice(v)) setModelPackageChoice(v);
-                    }}
-                  >
-                    {MODEL_PACKAGE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                        style={selectStyle}
+                        value={modelPackageChoice}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (isModelPackageChoice(v)) setModelPackageChoice(v);
+                        }}
+                    >
+                      {MODEL_PACKAGE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                      ))}
+                    </select>
                 )}
 
-                <p style={{ ...helperStyle, marginTop: 6 }}>
+                <p style={{...helperStyle, marginTop: 6}}>
                   Includes: Wuhan reference, fixed training features, Lasso model, scaler.
                 </p>
               </div>
 
+              {/* Outdir */}
               <div>
                 <div style={labelRowStyle}>
                   <label style={labelStyle}>Where results are written</label>
                   <InfoIcon
-                    onOpen={() =>
-                      openModal(
-                        "Results location",
-                        "Outputs are written to an S3 folder. When the job status becomes SUCCEEDED, a download becomes available."
-                      )
-                    }
-                    title="Results location info"
+                      onOpen={() =>
+                          openModal(
+                              "Results location",
+                              "Outputs are written to an S3 folder. When the job status becomes SUCCEEDED, a download becomes available."
+                          )
+                      }
+                      title="Results location info"
                   />
                 </div>
 
                 {OUTDIR_OPTIONS.length <= 1 ? (
-                  <HoverTip text="S3 folder where outputs are written." block>
-                    <input
-                      style={lockedFieldStyle}
-                      value={selectedOutdirLabel}
-                      disabled
-                      readOnly
-                      aria-label="Results folder (fixed)"
-                    />
-                  </HoverTip>
+                    <HoverTip text="S3 folder where outputs are written." block>
+                      <input
+                          style={lockedFieldStyle}
+                          value={selectedOutdirLabel}
+                          disabled
+                          readOnly
+                          aria-label="Results folder (fixed)"
+                      />
+                    </HoverTip>
                 ) : (
-                  <HoverTip text="S3 folder where outputs are written." block>
-                    <select
-                      style={{
-                        ...selectStyle,
-                        ...(useCustomOutdir && !DEMO_LOCK_CUSTOM_S3
-                          ? {
-                              cursor: "not-allowed",
-                              background: "#f8fafc",
-                              color: "#64748b",
-                            }
-                          : null),
-                      }}
-                      value={outdirChoice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setOutdirChoice(v);
-                        if (useCustomOutdir && DEMO_LOCK_CUSTOM_S3) setCustomOutdir(v);
-                      }}
-                      disabled={useCustomOutdir && !DEMO_LOCK_CUSTOM_S3}
-                      aria-label="Results folder preset"
-                    >
-                      {OUTDIR_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </HoverTip>
+                    <HoverTip text="S3 folder where outputs are written." block>
+                      <select
+                          style={{
+                            ...selectStyle,
+                            ...(useCustomOutdir && !DEMO_LOCK_CUSTOM_S3
+                                ? {cursor: "not-allowed", background: "#f8fafc", color: "#64748b"}
+                                : null),
+                          }}
+                          value={outdirChoice}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setOutdirChoice(v);
+                            if (useCustomOutdir && DEMO_LOCK_CUSTOM_S3) setCustomOutdir(v);
+                          }}
+                          disabled={useCustomOutdir && !DEMO_LOCK_CUSTOM_S3}
+                          aria-label="Results folder preset"
+                      >
+                        {OUTDIR_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                        ))}
+                      </select>
+                    </HoverTip>
                 )}
 
-                <div
-                  style={{
-                    marginTop: 6,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: "11px",
-                    color: "#64748b",
-                  }}
-                >
+                <div style={{
+                  marginTop: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: "11px",
+                  color: "#64748b"
+                }}>
                   <input
-                    id="customOutdir"
-                    type="checkbox"
-                    checked={useCustomOutdir}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setUseCustomOutdir(checked);
-                      if (checked) {
-                        setCustomOutdir((prev) => (prev.trim() ? prev : outdirChoice));
-                      }
-                    }}
-                    aria-label="Use custom S3 folder for results"
+                      id="customOutdir"
+                      type="checkbox"
+                      checked={useCustomOutdir}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setUseCustomOutdir(checked);
+                        if (checked) setCustomOutdir((prev) => (prev.trim() ? prev : outdirChoice));
+                      }}
+                      aria-label="Use custom S3 folder for results"
                   />
 
                   {DEMO_LOCK_CUSTOM_S3 ? (
-                    <HoverTip text="Shown for realism. Custom S3 folders are locked in this demo build.">
-                      <label htmlFor="customOutdir" style={{ cursor: "help" }}>
-                        Use custom S3 folder
-                      </label>
-                    </HoverTip>
+                      <HoverTip
+                          text="Custom S3 folders are restricted for access control purposes. Contact the owner if you need custom S3 folders enabled.">
+                        <label htmlFor="customOutdir" style={{cursor: "help"}}>
+                          Use custom S3 folder
+                        </label>
+                      </HoverTip>
                   ) : (
-                    <label htmlFor="customOutdir">Use custom S3 folder</label>
+                      <label htmlFor="customOutdir">Use custom S3 folder</label>
                   )}
                 </div>
 
                 {useCustomOutdir && (
-                  <div style={{ marginTop: 6 }}>
-                    {DEMO_LOCK_CUSTOM_S3 ? (
-                      <HoverTip
-                        text="Demo mode: custom S3 folders are locked. The preset above controls the selected output."
-                        block
-                      >
-                        <input
-                          style={lockedFieldStyle}
-                          value={customOutdir}
-                          disabled
-                          readOnly
-                          aria-label="Custom results folder (locked)"
-                        />
-                      </HoverTip>
-                    ) : (
-                      <HoverTip text="Custom S3 folder where outputs will be written." block>
-                        <input
-                          style={inputStyle}
-                          placeholder="s3://bucket/results/"
-                          value={customOutdir}
-                          maxLength={URI_MAX}
-                          onChange={(e) => setCustomOutdir(e.target.value.slice(0, URI_MAX))}
-                          aria-label="Custom results folder"
-                        />
-                      </HoverTip>
-                    )}
-                  </div>
+                    <div style={{marginTop: 6}}>
+                      {DEMO_LOCK_CUSTOM_S3 ? (
+                          <HoverTip
+                              text="Custom S3 folders are restricted for access control. The preset above controls the selected output."
+                              block
+                          >
+                            <input
+                                style={lockedFieldStyle}
+                                value={customOutdir}
+                                disabled
+                                readOnly
+                                aria-label="Custom results folder (locked)"
+                            />
+                          </HoverTip>
+                      ) : (
+                          <HoverTip text="Custom S3 folder where outputs will be written." block>
+                            <input
+                                style={inputStyle}
+                                placeholder="s3://bucket/results/"
+                                value={customOutdir}
+                                maxLength={URI_MAX}
+                                onChange={(e) => setCustomOutdir(e.target.value.slice(0, URI_MAX))}
+                                aria-label="Custom results folder"
+                            />
+                          </HoverTip>
+                      )}
+                    </div>
                 )}
               </div>
 
-              {/* Advanced settings (fixed, collapsible) */}
+              {/* Advanced settings */}
               <div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    flexWrap: "wrap",
-                  }}
-                >
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap"
+                }}>
                   <div style={labelRowStyle}>
                     <TipWrap text={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}>
                       <button
-                        type="button"
-                        onClick={() => setAdvancedOpen((v) => !v)}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          padding: 0,
-                          margin: 0,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          color: "#0f172a",
-                        }}
-                        aria-label={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
-                      >
-                        <span style={{ ...labelStyle, marginBottom: 0 }}>Advanced settings</span>
-                        <span
-                          aria-hidden="true"
+                          type="button"
+                          onClick={() => setAdvancedOpen((v) => !v)}
                           style={{
-                            fontSize: 12,
-                            fontWeight: 900,
-                            color: "#334155",
-                            lineHeight: 1,
-                            transform: advancedOpen ? "translateY(-1px)" : "translateY(0)",
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            margin: 0,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            color: "#0f172a",
                           }}
+                          aria-label={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
+                      >
+                        <span style={{...labelStyle, marginBottom: 0}}>Advanced settings</span>
+                        <span
+                            aria-hidden="true"
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 900,
+                              color: "#334155",
+                              lineHeight: 1,
+                              transform: advancedOpen ? "translateY(-1px)" : "translateY(0)",
+                            }}
                         >
                           {advancedOpen ? "▴" : "▾"}
                         </span>
@@ -2655,32 +3191,32 @@ function App() {
                     </TipWrap>
 
                     <InfoIcon
-                      onOpen={() =>
-                        openModal(
-                          "Advanced settings",
-                          "These parameters are fixed in the demo to keep the demo options predictable.\n\nThey are still shown so a reviewer can understand the run configuration."
-                        )
-                      }
-                      title="Advanced settings info"
-                      hoverText="Fixed for demo (shown for clarity)."
+                        onOpen={() =>
+                            openModal(
+                                "Advanced settings",
+                                "These parameters are currently read-only to keep runs consistent and control cost.\n\nThey may become configurable in a future release."
+                            )
+                        }
+                        title="Advanced settings info"
+                        hoverText="Restricted to control cost & abuse"
                     />
                   </div>
 
                   <TipWrap text={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}>
                     <button
-                      type="button"
-                      onClick={() => setAdvancedOpen((v) => !v)}
-                      style={{
-                        fontSize: "11px",
-                        padding: "5px 10px",
-                        borderRadius: "999px",
-                        border: "1px solid #e2e8f0",
-                        background: advancedOpen ? "#f8fafc" : "#ffffff",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                        color: "#334155",
-                      }}
-                      aria-label={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
+                        type="button"
+                        onClick={() => setAdvancedOpen((v) => !v)}
+                        style={{
+                          fontSize: "11px",
+                          padding: "5px 10px",
+                          borderRadius: "999px",
+                          border: "1px solid #e2e8f0",
+                          background: advancedOpen ? "#f8fafc" : "#ffffff",
+                          cursor: "pointer",
+                          fontWeight: 900,
+                          color: "#334155",
+                        }}
+                        aria-label={advancedOpen ? "Hide advanced settings" : "Show advanced settings"}
                     >
                       {advancedOpen ? "Hide" : "Show"}
                     </button>
@@ -2688,203 +3224,198 @@ function App() {
                 </div>
 
                 {advancedOpen ? (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      display: "grid",
-                      gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))",
-                      gap: 12,
-                      alignItems: "start",
-                    }}
-                  >
-                    <div>
-                      <label style={labelStyle}>Min alignment identity</label>
-                      <HoverTip text="Fixed for demo." block>
-                        <input
-                          style={lockedFieldStyle}
-                          value={`${Math.round(ADVANCED_DEFAULTS.min_alignment_identity * 100)}%`}
-                          disabled
-                          readOnly
-                        />
-                      </HoverTip>
-                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35 }}>
-                        Minimum match required for an alignment to pass.
+                    <div
+                        style={{
+                          marginTop: 10,
+                          display: "grid",
+                          gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))",
+                          gap: 12,
+                          alignItems: "start",
+                        }}
+                    >
+                      <div>
+                        <label style={labelStyle}>Min alignment identity</label>
+                        <HoverTip text="Restricted to control cost & abuse" block>
+                          <input
+                              style={lockedFieldStyle}
+                              value={`${Math.round(ADVANCED_DEFAULTS.min_alignment_identity * 100)}%`}
+                              disabled
+                              readOnly
+                          />
+                        </HoverTip>
+                        <div style={{fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35}}>
+                          Minimum match required for an alignment to pass.
+                        </div>
                       </div>
-                    </div>
 
-                    <div>
-                      <label style={labelStyle}>Chunk size (samples)</label>
-                      <HoverTip text="Fixed for demo." block>
-                        <input
-                          style={lockedFieldStyle}
-                          value={String(ADVANCED_DEFAULTS.chunk_size_samples)}
-                          disabled
-                          readOnly
-                        />
-                      </HoverTip>
-                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35 }}>
-                        Number of samples per chunk emitted from the input and processed per branch.
+                      <div>
+                        <label style={labelStyle}>Chunk size (samples)</label>
+                        <HoverTip text="Restricted to control cost & abuse" block>
+                          <input
+                              style={lockedFieldStyle}
+                              value={String(ADVANCED_DEFAULTS.chunk_size_samples)}
+                              disabled
+                              readOnly
+                          />
+                        </HoverTip>
+                        <div style={{fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35}}>
+                          Number of samples per chunk emitted from the input and processed per branch.
+                        </div>
                       </div>
-                    </div>
 
-                    <div>
-                      <label style={labelStyle}>Max branches</label>
-                      <HoverTip text="Fixed for demo." block>
-                        <input
-                          style={lockedFieldStyle}
-                          value={String(ADVANCED_DEFAULTS.max_branches)}
-                          disabled
-                          readOnly
-                        />
-                      </HoverTip>
-                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35 }}>
-                        Upper limit on how many branches may run in parallel.
+                      <div>
+                        <label style={labelStyle}>Max branches</label>
+                        <HoverTip text="Restricted to control cost & abuse" block>
+                          <input
+                              style={lockedFieldStyle}
+                              value={String(ADVANCED_DEFAULTS.max_branches)}
+                              disabled
+                              readOnly
+                          />
+                        </HoverTip>
+                        <div style={{fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.35}}>
+                          Upper limit on how many branches may run in parallel.
+                        </div>
                       </div>
                     </div>
-                  </div>
                 ) : null}
               </div>
 
-              {/* ✅ API key field (x-api-key) */}
-                <div>
-                    <div style={labelRowStyle}>
-                        <label style={labelStyle}>
-                            API key <span style={{color: "#b91c1c"}}>*</span>
-                        </label>
-                        <InfoIcon
-                            onOpen={() =>
-                                openModal(
-                                    "API key",
-                                    [
-                                        "Enter your access key to use this site.",
-                                        "",
-                                        "Keep this key private. Do not share it in screenshots.",
-                                        "",
-                                        "Your key is saved only in this browser tab and is cleared when you close the tab.",
-                                    ].join("\n")
-                                )
-                            }
-                            title="API key info"
-                            hoverText="Required to use this site."
-                        />
-                    </div>
-
-                    <input
-                        type="password"
-                        style={inputStyle}
-                        placeholder="x-api-key value…"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        autoComplete="off"
-                    />
+              {/* ✅ API key field */}
+              <div>
+                <div style={labelRowStyle}>
+                  <label style={labelStyle}>
+                    API key <span style={{color: "#b91c1c"}}>*</span>
+                  </label>
+                  <InfoIcon
+                      onOpen={() =>
+                          openModal(
+                              "API key",
+                              [
+                                "Enter your access key to use this site (contact the owner to request an API key).",
+                                "",
+                                "Keep this key private. Do not share it in screenshots.",
+                                "",
+                                "Your key is saved only in this browser tab and is cleared when you close the tab.",
+                              ].join("\n")
+                          )
+                      }
+                      title="API key info"
+                      hoverText="Required to use this site."
+                  />
                 </div>
 
-                <div style={{marginTop: 6}}>
-                    <TipWrap
-                        text={
-                            submitEnabled
-                                ? "Submit a new job"
-                      : !jobName.trim()
-                      ? "Enter a job name to submit."
-                      : "Submitting…"
-                  }
-                  block
+                <input
+                    type="password"
+                    style={inputStyle}
+                    placeholder="x-api-key value…"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    autoComplete="off"
+                />
+              </div>
+
+              {/* Submit */}
+              <div style={{marginTop: 6}}>
+                <TipWrap
+                    text={
+                      submitEnabled
+                          ? "Submit a new job"
+                          : !jobName.trim()
+                              ? "Enter a job name to submit."
+                              : !apiKey.trim()
+                                  ? "Enter an API key to submit."
+                                  : "Submitting…"
+                    }
+                    block
                 >
                   <button
-                    type="submit"
-                    style={{
-                      ...baseButtonStyle,
-                      cursor: submitEnabled ? "pointer" : "not-allowed",
-                      opacity: submitEnabled ? 1 : 0.5,
-                    }}
-                    disabled={!submitEnabled}
-                    aria-label="Submit job"
+                      type="submit"
+                      style={{
+                        ...baseButtonStyle,
+                        cursor: submitEnabled ? "pointer" : "not-allowed",
+                        opacity: submitEnabled ? 1 : 0.5,
+                      }}
+                      disabled={!submitEnabled}
+                      aria-label="Submit job"
                   >
                     {isSubmitting ? "Submitting…" : "Submit job"}
                   </button>
                 </TipWrap>
 
                 {submitError && (
-                  <p style={{ marginTop: 6, fontSize: "11px", color: "#b91c1c" }}>
-                    {submitError}
-                  </p>
+                    <p style={{marginTop: 6, fontSize: "11px", color: "#b91c1c"}}>
+                      {submitError}
+                    </p>
                 )}
                 {submitInfo && (
-                  <p style={{ marginTop: 6, fontSize: "11px", color: "#166534" }}>
-                    {submitInfo}
-                  </p>
+                    <p style={{marginTop: 6, fontSize: "11px", color: "#166534"}}>
+                      {submitInfo}
+                    </p>
                 )}
               </div>
             </form>
 
-            <p style={{ marginTop: 10, fontSize: "10px", color: "#94a3b8" }}>
+            <p style={{marginTop: 10, fontSize: "10px", color: "#94a3b8"}}>
               API base: <code>{API_BASE}</code>
             </p>
           </section>
 
           {/* RIGHT CARD */}
           <section style={cardStyle}>
-            <h2
-              style={{
-                fontSize: "15px",
-                fontWeight: 700,
-                color: "#0f172a",
-                margin: 0,
-                marginBottom: 12,
-              }}
-            >
+            <h2 style={{fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: 0, marginBottom: 12}}>
               2. Search jobs & download results
             </h2>
 
             {/* Controls row */}
             <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: isNarrow
-                  ? "1fr"
-                  : "minmax(360px, 1.2fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr)",
-                gap: 10,
-                marginBottom: 10,
-              }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: isNarrow
+                      ? "1fr"
+                      : "minmax(360px, 1.2fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr)",
+                  gap: 10,
+                  marginBottom: 10,
+                }}
             >
               <div>
                 <label style={labelStyle}>Search</label>
                 <input
-                  style={inputStyle}
-                  placeholder="Search by job ID, job name, or description…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                    style={inputStyle}
+                    placeholder="Search by job ID, job name, or description…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <div style={{display: "flex", gap: 8, marginTop: 6}}>
                   <TipWrap text={filtersApplied ? "Clear search, status, time, and sort" : "No filters are applied"}>
                     <button
-                      type="button"
-                      style={{
-                        fontSize: "11px",
-                        padding: "5px 10px",
-                        borderRadius: "999px",
-                        border: "1px solid #e2e8f0",
-                        background: "#ffffff",
-                        cursor: filtersApplied ? "pointer" : "not-allowed",
-                        fontWeight: 800,
-                        opacity: filtersApplied ? 1 : 0.5,
-                      }}
-                      onClick={() => {
-                        if (!filtersApplied) return;
-                        setQuery("");
-                        setStatusFilter("ALL");
-                        setTimeFilterMinutes(-1);
-                        setSortKey("updated");
-                        setSortDir("desc");
-                      }}
-                      disabled={!filtersApplied}
-                      aria-label="Clear filters"
+                        type="button"
+                        style={{
+                          fontSize: "11px",
+                          padding: "5px 10px",
+                          borderRadius: "999px",
+                          border: "1px solid #e2e8f0",
+                          background: "#ffffff",
+                          cursor: filtersApplied ? "pointer" : "not-allowed",
+                          fontWeight: 800,
+                          opacity: filtersApplied ? 1 : 0.5,
+                        }}
+                        onClick={() => {
+                          if (!filtersApplied) return;
+                          setQuery("");
+                          setStatusFilter("ALL");
+                          setTimeFilterMinutes(-1);
+                          setSortKey("updated");
+                          setSortDir("desc");
+                        }}
+                        disabled={!filtersApplied}
+                        aria-label="Clear filters"
                     >
                       Clear filters
                     </button>
                   </TipWrap>
 
-                  <span style={{ fontSize: "11px", color: "#64748b", alignSelf: "center" }}>
+                  <span style={{fontSize: "11px", color: "#64748b", alignSelf: "center"}}>
                     {filteredJobs.length} / {recentJobs.length} shown
                   </span>
                 </div>
@@ -2893,16 +3424,16 @@ function App() {
               <div>
                 <label style={labelStyle}>Status</label>
                 <select
-                  style={selectStyle}
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  aria-label="Status filter"
+                    style={selectStyle}
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    aria-label="Status filter"
                 >
                   <option value="ALL">All</option>
                   {availableStatuses.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
                   ))}
                 </select>
               </div>
@@ -2910,15 +3441,15 @@ function App() {
               <div>
                 <label style={labelStyle}>Updated</label>
                 <select
-                  style={selectStyle}
-                  value={String(timeFilterMinutes)}
-                  onChange={(e) => setTimeFilterMinutes(Number(e.target.value))}
-                  aria-label="Updated time filter"
+                    style={selectStyle}
+                    value={String(timeFilterMinutes)}
+                    onChange={(e) => setTimeFilterMinutes(Number(e.target.value))}
+                    aria-label="Updated time filter"
                 >
                   {TIME_OPTIONS.map((opt) => (
-                    <option key={opt.minutes} value={String(opt.minutes)}>
-                      {opt.label}
-                    </option>
+                      <option key={opt.minutes} value={String(opt.minutes)}>
+                        {opt.label}
+                      </option>
                   ))}
                 </select>
               </div>
@@ -2926,430 +3457,427 @@ function App() {
 
             {/* Selected job panel */}
             {currentJob && (
-              <div style={{ marginTop: 6, marginBottom: 14, fontSize: "12px", color: "#0f172a" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    justifyContent: "space-between",
-                    gap: 10,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 800,
-                        color: "#0f172a",
-                        lineHeight: 1.2,
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {currentMeta?.name || "Highlighted job"}
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: 11,
-                        color: "#64748b",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span>Job ID:</span>
-                      <TipWrap text={currentJob.job_id} maxWidth={520}>
-                        <code
+                <div style={{marginTop: 6, marginBottom: 14, fontSize: "12px", color: "#0f172a"}}>
+                  <div style={{display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10}}>
+                    <div style={{minWidth: 0}}>
+                      <div
                           style={{
+                            fontSize: 14,
+                            fontWeight: 800,
                             color: "#0f172a",
-                            maxWidth: "100%",
-                            whiteSpace: "normal",
-                            wordBreak: "break-all",
-                            overflowWrap: "anywhere",
+                            lineHeight: 1.2,
+                            wordBreak: "break-word",
                           }}
-                        >
-                          {currentJob.job_id}
-                        </code>
-                      </TipWrap>
+                      >
+                        {currentMeta?.name || "Highlighted job"}
+                      </div>
+
+                      <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 11,
+                            color: "#64748b",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            flexWrap: "wrap",
+                          }}
+                      >
+                        <span>Job ID:</span>
+                        <TipWrap text={currentJob.job_id} maxWidth={520}>
+                          <code
+                              style={{
+                                color: "#0f172a",
+                                maxWidth: "100%",
+                                whiteSpace: "normal",
+                                wordBreak: "break-all",
+                                overflowWrap: "anywhere",
+                              }}
+                          >
+                            {currentJob.job_id}
+                          </code>
+                        </TipWrap>
+                      </div>
                     </div>
-                  </div>
 
-                  <InfoIcon
-                    onOpen={openSelectedJobInfo}
-                    title="Job details"
-                    hoverText="View inputs + metadata for highlighted job."
-                  />
-                </div>
-
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#0f172a" }}>Description</div>
-                  <div
-                    style={{
-                      marginTop: 4,
-                      fontSize: 11,
-                      color: currentMeta?.description?.trim() ? "#475569" : "#94a3b8",
-                      minHeight: 16,
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {currentMeta?.description?.trim() || "—"}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    margin: "10px 0 0",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-                    <strong>Status:</strong>
-                    <ExpandableStatusPill
-                      status={currentJob.status}
-                      open={lifecycleOpen}
-                      onToggle={() => setLifecycleOpen((v) => !v)}
+                    <InfoIcon
+                        onOpen={openSelectedJobInfo}
+                        title="Job details"
+                        hoverText="View inputs + metadata for highlighted job."
                     />
                   </div>
 
-                  <TipWrap text={lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}>
-                    <button
-                      type="button"
-                      onClick={() => setLifecycleOpen((v) => !v)}
-                      style={{
-                        ...smallPillButton,
-                        fontWeight: 900,
-                        background: lifecycleOpen ? "#f8fafc" : "#ffffff",
-                        color: "#334155",
-                        borderColor: "#e2e8f0",
-                      }}
-                      aria-label={lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}
+                  <div style={{marginTop: 10}}>
+                    <div style={{fontSize: 11, fontWeight: 700, color: "#0f172a"}}>Description</div>
+                    <div
+                        style={{
+                          marginTop: 4,
+                          fontSize: 11,
+                          color: currentMeta?.description?.trim() ? "#475569" : "#94a3b8",
+                          minHeight: 16,
+                          wordBreak: "break-word",
+                        }}
                     >
-                      {lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}
+                      {currentMeta?.description?.trim() || "—"}
+                    </div>
+                  </div>
+
+                  <div
+                      style={{
+                        margin: "10px 0 0",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        flexWrap: "wrap",
+                      }}
+                  >
+                    <div style={{display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0}}>
+                      <strong>Status:</strong>
+                      <ExpandableStatusPill
+                          status={currentJob.status}
+                          open={lifecycleOpen}
+                          onToggle={() => setLifecycleOpen((v) => !v)}
+                      />
+                    </div>
+
+                    <TipWrap text={lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}>
+                      <button
+                          type="button"
+                          onClick={() => setLifecycleOpen((v) => !v)}
+                          style={{
+                            ...smallPillButton,
+                            fontWeight: 900,
+                            background: lifecycleOpen ? "#f8fafc" : "#ffffff",
+                            color: "#334155",
+                            borderColor: "#e2e8f0",
+                          }}
+                          aria-label={lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}
+                      >
+                        {lifecycleOpen ? "Hide lifecycle" : "Show lifecycle"}
+                      </button>
+                    </TipWrap>
+                  </div>
+
+                  {lifecycleOpen ? (
+                      <JobLifecycle status={currentJob.status} onOpenHelp={openLifecycleHelp}/>
+                  ) : null}
+
+                  <div
+                      style={{
+                        marginTop: 10,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 2,
+                        fontSize: 11,
+                        color: "#0f172a",
+                      }}
+                  >
+                    <div>
+                      <strong>Submitted:</strong> {formatTime(createdStamp)}
+                      {createdRel ? <span style={{color: "#64748b"}}> ({createdRel})</span> : null}
+                    </div>
+
+                    <div>
+                      <strong>Last updated:</strong> {formatTime(updatedStamp)}
+                      {updatedRel ? <span style={{color: "#64748b"}}> ({updatedRel})</span> : null}
+                    </div>
+                  </div>
+
+                  <TipWrap
+                      text={
+                        canDownloadHighlighted
+                            ? "Downloads results for the highlighted row."
+                            : "Highlight a SUCCEEDED job to enable download."
+                      }
+                      block
+                  >
+                    <button
+                        type="button"
+                        style={{
+                          ...baseButtonStyle,
+                          marginTop: 10,
+                          opacity: canDownloadHighlighted ? 1 : 0.5,
+                          cursor: canDownloadHighlighted ? "pointer" : "not-allowed",
+                        }}
+                        onClick={() => currentJob && void handleDownload(currentJob)}
+                        disabled={!canDownloadHighlighted}
+                        aria-label="Download highlighted job"
+                    >
+                      Download highlighted job
                     </button>
                   </TipWrap>
+
+                  {!canDownloadHighlighted && (
+                      <p style={{marginTop: 4, fontSize: "10px", color: "#94a3b8"}}>
+                        Download becomes available when status is <strong>SUCCEEDED</strong>.
+                      </p>
+                  )}
+
+                  {statusError && (
+                      <p style={{marginTop: 8, fontSize: "11px", color: "#b91c1c"}}>
+                        {statusError}
+                      </p>
+                  )}
+
+                  {!currentInputs && (
+                      <p style={{marginTop: 6, fontSize: "10px", color: "#94a3b8"}}>
+                        Tip: job details include inputs only for jobs submitted in this browser session.
+                      </p>
+                  )}
                 </div>
-
-                {lifecycleOpen ? <JobLifecycle status={currentJob.status} onOpenHelp={openLifecycleHelp} /> : null}
-
-                {/* ONE timestamp block (no duplicates) */}
-                <div
-                  style={{
-                    marginTop: 10,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                    fontSize: 11,
-                    color: "#0f172a",
-                  }}
-                >
-                  <div>
-                    <strong>Submitted:</strong> {formatTime(createdStamp)}
-                    {createdRel ? <span style={{ color: "#64748b" }}> ({createdRel})</span> : null}
-                  </div>
-
-                  <div>
-                    <strong>Last updated:</strong> {formatTime(updatedStamp)}
-                    {updatedRel ? <span style={{ color: "#64748b" }}> ({updatedRel})</span> : null}
-                  </div>
-                </div>
-
-                <TipWrap
-                  text={
-                    canDownloadHighlighted
-                      ? "Downloads results for the highlighted row."
-                      : "Highlight a SUCCEEDED job to enable download."
-                  }
-                  block
-                >
-                  <button
-                    type="button"
-                    style={{
-                      ...baseButtonStyle,
-                      marginTop: 10,
-                      opacity: canDownloadHighlighted ? 1 : 0.5,
-                      cursor: canDownloadHighlighted ? "pointer" : "not-allowed",
-                    }}
-                    onClick={() => currentJob && void handleDownload(currentJob)}
-                    disabled={!canDownloadHighlighted}
-                    aria-label="Download highlighted job"
-                  >
-                    Download highlighted job
-                  </button>
-                </TipWrap>
-
-                {!canDownloadHighlighted && (
-                  <p style={{ marginTop: 4, fontSize: "10px", color: "#94a3b8" }}>
-                    Download becomes available when status is <strong>SUCCEEDED</strong>.
-                  </p>
-                )}
-
-                {statusError && <p style={{ marginTop: 8, fontSize: "11px", color: "#b91c1c" }}>{statusError}</p>}
-
-                {!currentInputs && (
-                  <p style={{ marginTop: 6, fontSize: "10px", color: "#94a3b8" }}>
-                    Tip: job details include inputs only for jobs submitted in this browser session.
-                  </p>
-                )}
-              </div>
             )}
 
             {/* Table */}
             {recentJobs.length === 0 ? (
-              <p style={{ fontSize: "11px", color: "#64748b" }}>Submit a job to see it listed here.</p>
+                <p style={{fontSize: "11px", color: "#64748b"}}>Submit a job to see it listed here.</p>
             ) : filteredJobs.length === 0 ? (
-              <p style={{ fontSize: "11px", color: "#64748b" }}>No jobs match the current filters.</p>
+                <p style={{fontSize: "11px", color: "#64748b"}}>No jobs match the current filters.</p>
             ) : (
-              <>
-                {/* Selected row off-page banner */}
-                {selectedJobId && selectedIndexInFiltered >= 0 && !selectedIsOnThisPage && selectedPageIndex !== null && (
+                <>
+                  {/* Selected row off-page banner */}
+                  {selectedJobId && selectedIndexInFiltered >= 0 && !selectedIsOnThisPage && selectedPageIndex !== null && (
+                      <div
+                          style={{
+                            marginBottom: 10,
+                            padding: "8px 10px",
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0",
+                            background: "#f8fafc",
+                            fontSize: 11,
+                            color: "#334155",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                          }}
+                      >
+                        <div style={{minWidth: 0}}>
+                          Highlighted job is not on this page. It is currently
+                          on <strong>page {selectedPageIndex + 1}</strong>.
+                        </div>
+
+                        <TipWrap text="Jump to the page containing the highlighted job">
+                          <button
+                              type="button"
+                              onClick={() => setPageIndex(selectedPageIndex)}
+                              style={{
+                                ...smallPillButton,
+                                borderColor: "#bfdbfe",
+                                background: "#eff6ff",
+                                color: "#1d4ed8",
+                              }}
+                              aria-label={`Jump to page ${selectedPageIndex + 1}`}
+                          >
+                            Jump to page {selectedPageIndex + 1}
+                          </button>
+                        </TipWrap>
+                      </div>
+                  )}
+
+                  {selectedJobId && selectedIndexInFiltered < 0 && (
+                      <div
+                          style={{
+                            marginBottom: 10,
+                            padding: "8px 10px",
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0",
+                            background: "#f8fafc",
+                            fontSize: 11,
+                            color: "#64748b",
+                          }}
+                      >
+                        A job is highlighted, but it is not in the current filtered results. (It may be hidden by
+                        search/status/time filters.)
+                      </div>
+                  )}
+
+                  {/* Pagination + selection toolbar */}
                   <div
-                    style={{
-                      marginBottom: 10,
-                      padding: "8px 10px",
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      background: "#f8fafc",
-                      fontSize: 11,
-                      color: "#334155",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        marginBottom: 8,
+                        fontSize: 11,
+                        color: "#475569",
+                        flexWrap: "wrap",
+                      }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      Highlighted job is not on this page. It is currently on <strong>page {selectedPageIndex + 1}</strong>.
-                    </div>
+                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                      <TipWrap text="Previous page (←)">
+                        <button
+                            type="button"
+                            onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                            disabled={safePageIndex === 0}
+                            aria-label="Previous page"
+                            style={arrowButtonStyle(safePageIndex === 0)}
+                        >
+                          ←
+                        </button>
+                      </TipWrap>
 
-                    <TipWrap text="Jump to the page containing the highlighted job">
-                      <button
-                        type="button"
-                        onClick={() => setPageIndex(selectedPageIndex)}
-                        style={{
-                          ...smallPillButton,
-                          borderColor: "#bfdbfe",
-                          background: "#eff6ff",
-                          color: "#1d4ed8",
-                        }}
-                        aria-label={`Jump to page ${selectedPageIndex + 1}`}
-                      >
-                        Jump to page {selectedPageIndex + 1}
-                      </button>
-                    </TipWrap>
-                  </div>
-                )}
+                      <TipWrap text="Next page (→)">
+                        <button
+                            type="button"
+                            onClick={() => setPageIndex((p) => Math.min(totalPages - 1, p + 1))}
+                            disabled={safePageIndex >= totalPages - 1}
+                            aria-label="Next page"
+                            style={arrowButtonStyle(safePageIndex >= totalPages - 1)}
+                        >
+                          →
+                        </button>
+                      </TipWrap>
 
-                {selectedJobId && selectedIndexInFiltered < 0 && (
-                  <div
-                    style={{
-                      marginBottom: 10,
-                      padding: "8px 10px",
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      background: "#f8fafc",
-                      fontSize: 11,
-                      color: "#64748b",
-                    }}
-                  >
-                    A job is highlighted, but it is not in the current filtered results. (It may be hidden by search/status/time filters.)
-                  </div>
-                )}
-
-                {/* Pagination + selection toolbar */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    marginBottom: 8,
-                    fontSize: 11,
-                    color: "#475569",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <TipWrap text="Previous page (←)">
-                      <button
-                        type="button"
-                        onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                        disabled={safePageIndex === 0}
-                        aria-label="Previous page"
-                        style={arrowButtonStyle(safePageIndex === 0)}
-                      >
-                        ←
-                      </button>
-                    </TipWrap>
-
-                    <TipWrap text="Next page (→)">
-                      <button
-                        type="button"
-                        onClick={() => setPageIndex((p) => Math.min(totalPages - 1, p + 1))}
-                        disabled={safePageIndex >= totalPages - 1}
-                        aria-label="Next page"
-                        style={arrowButtonStyle(safePageIndex >= totalPages - 1)}
-                      >
-                        →
-                      </button>
-                    </TipWrap>
-
-                    <span>
+                      <span>
                       Page <strong>{safePageIndex + 1}</strong> of <strong>{totalPages}</strong>
                     </span>
 
-                    <span style={{ color: "#94a3b8" }}>•</span>
-                    <span style={{ color: "#64748b" }}>Use ← / → keys</span>
-                  </div>
+                      <span style={{color: "#94a3b8"}}>•</span>
+                      <span style={{color: "#64748b"}}>Use ← / → keys</span>
+                    </div>
 
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <TipWrap
-                      text={
-                        selectedCount === 0
-                          ? "Select rows to download."
-                          : downloadableCount === 0
-                          ? "No selected rows are SUCCEEDED yet."
-                          : "Download all selected SUCCEEDED jobs (your browser may ask to allow multiple downloads)."
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => void downloadMany(checkedJobs)}
-                        disabled={downloadableCount === 0}
-                       style={{
-                          ...smallPillButton,
-
-                          // mirror Delete Selected behavior:
-                          borderColor: downloadableCount > 0 ? "#bbf7d0" : "#86efac",
-                          background: downloadableCount > 0 ? "#ecfdf5" : "#dcfce7",
-                          color: downloadableCount > 0 ? "#166534" : "#166534",
-
-                          opacity: downloadableCount > 0 ? 1 : 0.5,
-                          cursor: downloadableCount > 0 ? "pointer" : "not-allowed",
-                          fontWeight: 900,
-                        }}
-                        aria-label="Download selected"
-                      >
-                        Download selected ({downloadableCount})
-                      </button>
-                    </TipWrap>
-
-                    <TipWrap text={selectedCount === 0 ? "No selected rows." : "Clear selected rows."}>
-                      <button
-                        type="button"
-                        onClick={() => clearChecked()}
-                        disabled={selectedCount === 0}
-                        style={{
-                          ...smallPillButton,
-                          opacity: selectedCount === 0 ? 0.5 : 1,
-                          cursor: selectedCount === 0 ? "not-allowed" : "pointer",
-                        }}
-                        aria-label="Clear selection"
-                      >
-                        Clear selection ({selectedCount})
-                      </button>
-                    </TipWrap>
-
-                    <TipWrap
-                      text={
-                        selectedCount === 0
-                          ? "Select rows first."
-                          : deletableCount === 0
-                          ? "Only completed jobs (SUCCEEDED or FAILED) can be removed from this table."
-                          : "Delete completed selected jobs from this table (client-side only)."
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (selectedCount === 0) return;
-
-                          if (deletableCount === 0) {
-                            openModal("Nothing deletable selected", "Delete selected only applies to completed jobs (SUCCEEDED or FAILED).");
-                            return;
+                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                      <TipWrap
+                          text={
+                            selectedCount === 0
+                                ? "Select rows to download."
+                                : downloadableCount === 0
+                                    ? "No selected rows are SUCCEEDED yet."
+                                    : "Download all selected SUCCEEDED jobs (your browser may ask to allow multiple downloads)."
                           }
-
-                          setConfirm({
-                            title: "Delete selected jobs?",
-                            body:
-                              `This will remove ${deletableCount} completed job(s) from the table in this browser.\n\n` +
-                              `This does NOT cancel AWS Batch jobs or delete S3 data.\n\n` +
-                              `Proceed?`,
-                            danger: true,
-                            confirmLabel: "Delete",
-                            cancelLabel: "Cancel",
-                            onConfirm: () => {
-                              deleteManyClientSide(checkedCompleted.map((j) => j.job_id));
-                            },
-                          });
-                        }}
-                        disabled={deletableCount === 0}
-                        style={{
-                          ...dangerPillButton,
-                          opacity: deletableCount === 0 ? 0.5 : 1,
-                          cursor: deletableCount === 0 ? "not-allowed" : "pointer",
-                        }}
-                        aria-label="Delete selected"
                       >
-                        Delete selected ({deletableCount})
-                      </button>
-                    </TipWrap>
+                        <button
+                            type="button"
+                            onClick={() => void downloadMany(checkedJobs)}
+                            disabled={downloadableCount === 0}
+                            style={{
+                              ...smallPillButton,
+                              borderColor: downloadableCount > 0 ? "#bbf7d0" : "#86efac",
+                              background: downloadableCount > 0 ? "#ecfdf5" : "#dcfce7",
+                              color: "#166534",
+                              opacity: downloadableCount > 0 ? 1 : 0.5,
+                              cursor: downloadableCount > 0 ? "pointer" : "not-allowed",
+                              fontWeight: 900,
+                            }}
+                            aria-label="Download selected"
+                        >
+                          Download selected ({downloadableCount})
+                        </button>
+                      </TipWrap>
+
+                      <TipWrap text={selectedCount === 0 ? "No selected rows." : "Clear selected rows."}>
+                        <button
+                            type="button"
+                            onClick={() => clearChecked()}
+                            disabled={selectedCount === 0}
+                            style={{
+                              ...smallPillButton,
+                              opacity: selectedCount === 0 ? 0.5 : 1,
+                              cursor: selectedCount === 0 ? "not-allowed" : "pointer",
+                            }}
+                            aria-label="Clear selection"
+                        >
+                          Clear selection ({selectedCount})
+                        </button>
+                      </TipWrap>
+
+                      <TipWrap
+                          text={
+                            selectedCount === 0
+                                ? "Select rows first."
+                                : deletableCount === 0
+                                    ? "Only completed jobs (SUCCEEDED or FAILED) can be removed from this table."
+                                    : "Delete completed selected jobs from this table (client-side only)."
+                          }
+                      >
+                        <button
+                            type="button"
+                            onClick={() => {
+                              if (selectedCount === 0) return;
+
+                              if (deletableCount === 0) {
+                                openModal("Nothing deletable selected", "Delete selected only applies to completed jobs (SUCCEEDED or FAILED).");
+                                return;
+                              }
+
+                              setConfirm({
+                                title: "Delete selected jobs?",
+                                body:
+                                    `This will remove ${deletableCount} completed job(s) from the table in this browser.\n\n` +
+                                    `This does NOT cancel AWS Batch jobs or delete S3 data.\n\n` +
+                                    `Proceed?`,
+                                danger: true,
+                                confirmLabel: "Delete",
+                                cancelLabel: "Cancel",
+                                onConfirm: () => {
+                                  deleteManyClientSide(checkedCompleted.map((j) => j.job_id));
+                                },
+                              });
+                            }}
+                            disabled={deletableCount === 0}
+                            style={{
+                              ...dangerPillButton,
+                              opacity: deletableCount === 0 ? 0.5 : 1,
+                              cursor: deletableCount === 0 ? "not-allowed" : "pointer",
+                            }}
+                            aria-label="Delete selected"
+                        >
+                          Delete selected ({deletableCount})
+                        </button>
+                      </TipWrap>
+                    </div>
+
+                    <div style={{color: "#64748b"}}>
+                      {filteredJobs.length === 0
+                          ? "0 results"
+                          : (() => {
+                            const start = safePageIndex * PAGE_SIZE + 1;
+                            const end = Math.min((safePageIndex + 1) * PAGE_SIZE, filteredJobs.length);
+                            return `Showing ${start}-${end} of ${filteredJobs.length}`;
+                          })()}
+                    </div>
                   </div>
 
-                  <div style={{ color: "#64748b" }}>
-                    {filteredJobs.length === 0
-                      ? "0 results"
-                      : (() => {
-                          const start = safePageIndex * PAGE_SIZE + 1;
-                          const end = Math.min((safePageIndex + 1) * PAGE_SIZE, filteredJobs.length);
-                          return `Showing ${start}-${end} of ${filteredJobs.length}`;
-                        })()}
-                  </div>
-                </div>
+                  <div style={tableWrapperStyle}>
+                    <table style={tableStyle}>
+                      <colgroup>
+                        <col style={{width: 44}}/>
+                        <col style={{width: "20%"}}/>
+                        <col style={{width: "16%"}}/>
+                        <col style={{width: "18%"}}/>
+                        <col style={{width: "21%"}}/>
+                        <col style={{width: "21%"}}/>
+                      </colgroup>
 
-                <div style={tableWrapperStyle}>
-                  <table style={tableStyle}>
-                    <colgroup>
-                      <col style={{ width: 44 }} />
-                      <col style={{ width: "20%" }} />
-                      <col style={{ width: "16%" }} />
-                      <col style={{ width: "18%" }} />
-                      <col style={{ width: "21%" }} />
-                      <col style={{ width: "21%" }} />
-                    </colgroup>
-
-                    <thead>
-                      <tr style={{ textAlign: "left", backgroundColor: "#f8fafc" }}>
+                      <thead>
+                      <tr style={{textAlign: "left", backgroundColor: "#f8fafc"}}>
                         <th style={checkboxThStyle}>
                           <TipWrap text="Select all rows on this page">
                             <input
-                              ref={headerCheckboxRef}
-                              type="checkbox"
-                              checked={allOnPageChecked}
-                              onChange={(e) => {
-                                setCheckedMany(pageRowIds, e.target.checked);
-                              }}
-                              aria-label="Select all rows on this page"
+                                ref={headerCheckboxRef}
+                                type="checkbox"
+                                checked={allOnPageChecked}
+                                onChange={(e) => {
+                                  setCheckedMany(pageRowIds, e.target.checked);
+                                }}
+                                aria-label="Select all rows on this page"
                             />
                           </TipWrap>
                         </th>
 
                         <th style={thStyle}>Name</th>
-                        <th style={{ ...thStyle, paddingRight: 4 }}>Job ID</th>
-                        <th style={{ ...thStyle, paddingLeft: 4, paddingRight: 14 }}>Status</th>
+                        <th style={{...thStyle, paddingRight: 4}}>Job ID</th>
+                        <th style={{...thStyle, paddingLeft: 4, paddingRight: 14}}>Status</th>
 
-                        <th style={{ ...thStyle, paddingLeft: 12 }}>
+                        <th style={{...thStyle, paddingLeft: 12}}>
                           <TipWrap text="Sort by submission time">
                             <button
-                              type="button"
-                              style={headerButtonStyle(sortKey === "created")}
-                              onClick={() => toggleSort("created")}
-                              aria-label="Sort by submission time"
+                                type="button"
+                                style={headerButtonStyle(sortKey === "created")}
+                                onClick={() => toggleSort("created")}
+                                aria-label="Sort by submission time"
                             >
                               Submitted {sortArrow("created")}
                             </button>
@@ -3359,19 +3887,19 @@ function App() {
                         <th style={thStyle}>
                           <TipWrap text="Sort by last updated time">
                             <button
-                              type="button"
-                              style={headerButtonStyle(sortKey === "updated")}
-                              onClick={() => toggleSort("updated")}
-                              aria-label="Sort by last updated time"
+                                type="button"
+                                style={headerButtonStyle(sortKey === "updated")}
+                                onClick={() => toggleSort("updated")}
+                                aria-label="Sort by last updated time"
                             >
                               Updated {sortArrow("updated")}
                             </button>
                           </TipWrap>
                         </th>
                       </tr>
-                    </thead>
+                      </thead>
 
-                    <tbody>
+                      <tbody>
                       {pagedJobs.map((job) => {
                         const meta = jobMetaById[job.job_id];
                         const isSelected = selectedJobId === job.job_id;
@@ -3383,106 +3911,107 @@ function App() {
                         const descTip = meta?.description?.trim() ? meta.description.trim() : undefined;
 
                         return (
-                          <tr
-                            key={job.job_id}
-                            data-rowid={job.job_id}
-                            onClick={() => void loadJob(job.job_id)}
-                            style={{
-                              cursor: "pointer",
-                              backgroundColor: isSelected ? "#eff6ff" : "transparent",
-                              borderLeft: isSelected ? "3px solid #2563eb" : "3px solid transparent",
-                            }}
-                          >
-                            <td style={checkboxTdStyle} onClick={(e) => e.stopPropagation()}>
-                              <TipWrap text="Select for multi-download">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => toggleChecked(job.job_id)}
-                                  aria-label={`Select job ${job.job_id}`}
-                                />
-                              </TipWrap>
-                            </td>
+                            <tr
+                                key={job.job_id}
+                                data-rowid={job.job_id}
+                                onClick={() => void loadJob(job.job_id)}
+                                style={{
+                                  cursor: "pointer",
+                                  backgroundColor: isSelected ? "#eff6ff" : "transparent",
+                                  borderLeft: isSelected ? "3px solid #2563eb" : "3px solid transparent",
+                                }}
+                            >
+                              <td style={checkboxTdStyle} onClick={(e) => e.stopPropagation()}>
+                                <TipWrap text="Select for multi-download">
+                                  <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => toggleChecked(job.job_id)}
+                                      aria-label={`Select job ${job.job_id}`}
+                                  />
+                                </TipWrap>
+                              </td>
 
-                            <td style={{ ...tdStyle, color: meta?.name ? "#0f172a" : "#94a3b8" }}>
-                              <TipWrap text={descTip || meta?.name || undefined} maxWidth={520} block>
-                                <span style={cellBlock}>{meta?.name || "—"}</span>
-                              </TipWrap>
-                            </td>
+                              <td style={{...tdStyle, color: meta?.name ? "#0f172a" : "#94a3b8"}}>
+                                <TipWrap text={descTip || meta?.name || undefined} maxWidth={520} block>
+                                  <span style={cellBlock}>{meta?.name || "—"}</span>
+                                </TipWrap>
+                              </td>
 
-                            <td style={{ ...tdStyle, paddingRight: 4 }}>
-                              <TipWrap text={job.job_id} maxWidth={520}>
+                              <td style={{...tdStyle, paddingRight: 4}}>
+                                <TipWrap text={job.job_id} maxWidth={520}>
                                 <span style={cellBlock}>
                                   <code
-                                    style={{
-                                      display: "inline-block",
-                                      maxWidth: "100%",
-                                      overflow: "hidden",
-                                      textOverflow: "ellipsis",
-                                      whiteSpace: "nowrap",
-                                      color: "#0f172a",
-                                    }}
+                                      style={{
+                                        display: "inline-block",
+                                        maxWidth: "100%",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        color: "#0f172a",
+                                      }}
                                   >
                                     {truncateId(job.job_id)}
                                   </code>
                                 </span>
-                              </TipWrap>
-                            </td>
+                                </TipWrap>
+                              </td>
 
-                            <td style={{ ...tdStyle, paddingLeft: 4, paddingRight: 14 }}>
-                              <StatusPill status={job.status} />
-                            </td>
+                              <td style={{...tdStyle, paddingLeft: 4, paddingRight: 14}}>
+                                <StatusPill status={job.status}/>
+                              </td>
 
-                            <td style={{ ...tdStyle, paddingLeft: 12 }}>
-                              <TipWrap text={cStamp || undefined} maxWidth={520}>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                  <span style={cellBlock}>{formatTimeCompact(cStamp)}</span>
-                                  <span style={{ fontSize: 10, color: "#64748b" }}>
+                              <td style={{...tdStyle, paddingLeft: 12}}>
+                                <TipWrap text={cStamp || undefined} maxWidth={520}>
+                                  <div style={{display: "flex", flexDirection: "column", gap: 2}}>
+                                    <span style={cellBlock}>{formatTimeCompact(cStamp)}</span>
+                                    <span style={{fontSize: 10, color: "#64748b"}}>
                                     {cStamp ? relativeTime(cStamp, nowMs) : ""}
                                   </span>
-                                </div>
-                              </TipWrap>
-                            </td>
+                                  </div>
+                                </TipWrap>
+                              </td>
 
-                            <td style={tdStyle}>
-                              <TipWrap text={uStamp || undefined} maxWidth={520}>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                  <span style={cellBlock}>{formatTimeCompact(uStamp)}</span>
-                                  <span style={{ fontSize: 10, color: "#64748b" }}>
+                              <td style={tdStyle}>
+                                <TipWrap text={uStamp || undefined} maxWidth={520}>
+                                  <div style={{display: "flex", flexDirection: "column", gap: 2}}>
+                                    <span style={cellBlock}>{formatTimeCompact(uStamp)}</span>
+                                    <span style={{fontSize: 10, color: "#64748b"}}>
                                     {uStamp ? relativeTime(uStamp, nowMs) : ""}
                                   </span>
-                                </div>
-                              </TipWrap>
-                            </td>
-                          </tr>
+                                  </div>
+                                </TipWrap>
+                              </td>
+                            </tr>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
+                      </tbody>
+                    </table>
+                  </div>
 
-                <div
-                  style={{
-                    marginTop: 8,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                    gap: 8,
-                    fontSize: 11,
-                    color: "#64748b",
-                  }}
-                >
-                  <span>Table info</span>
-                  <InfoIcon onOpen={openTableInfo} title="Table info" hoverText="How selection, download, and delete work." />
-                </div>
-              </>
+                  <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "flex-end",
+                        gap: 8,
+                        fontSize: 11,
+                        color: "#64748b",
+                      }}
+                  >
+                    <span>Table info</span>
+                    <InfoIcon onOpen={openTableInfo} title="Table info"
+                              hoverText="How selection, download, and delete work."/>
+                  </div>
+                </>
             )}
           </section>
         </div>
       </div>
 
-      <CenterModal content={modal} onClose={() => setModal(null)} />
-      <ConfirmModal content={confirm} onClose={() => setConfirm(null)} />
+      <CenterModal content={modal} onClose={() => setModal(null)}/>
+      <ConfirmModal content={confirm} onClose={() => setConfirm(null)}/>
     </div>
   );
 }
