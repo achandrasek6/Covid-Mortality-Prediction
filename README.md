@@ -9,7 +9,7 @@
 
 🔗 **Live product (gated access):** https://www.covid-cfr-predictor.com/ *(API key required — contact achandrasek6@gmail.com for access)*
 
-A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway**/**Lambda**/**DynamoDB**/**S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **CFR predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
+A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway**/**Lambda**/**DynamoDB**/**S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **case-fatality rate (CFR) predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
 
 **Product surfaces**
 - **CFR Scoring Portal (Web, gated access, async scoring):** FASTA/multi-FASTA → per-genome **CFR predictions** + downloadable artifacts (`predictions.csv`, `failures.csv`)
@@ -27,45 +27,159 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 
 ## 📖 Table of Contents
 
-- [🧭 Architecture Overview](#-architecture-overview)
+- [🧩 Product surfaces](#-product-surfaces)
+  - [🌐 CFR Scoring Portal](#-cfr-scoring-portal)
+  - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator)
+- [🧾 What you get](#-what-you-get)
 - [✨ Key capabilities](#-key-capabilities)
-- [🧩 Services](#-services)
-  - [🌐 Service A — Public Demo UI (async genome scoring)](#-service-a--public-demo-ui-async-genome-scoring)
-  - [🧮 Service B — FastAPI Calculator (private, low-latency)](#-service-b--fastapi-calculator-private-low-latency)
-- [🚀 Quickstart Demo (UI)](#-quickstart-demo-ui)
+- [🧭 Architecture Overview](#-architecture-overview)
+  - [🌐 CFR Scoring Portal](#-cfr-scoring-portal)
+  - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator)
+- [🛡️ Reliability, guardrails, and ops](#️-reliability-guardrails-and-ops)
+- [🚀 Quickstart (CFR Scoring Portal)](#-quickstart-cfr-scoring-portal)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
-- [🔐 Access & Security](#-access--security)
-- [🚧 Limitations / Guardrails](#-limitations--guardrails)
+- [🔐 Access & guardrails](#-access--guardrails)
 - [📦 Outputs](#-outputs)
 - [🗂️ Repository Layout](#️-repository-layout)
 - [🧪 Model Development & Validation](#-model-development--validation)
   - [📈 Key Figures](#-key-figures)
 - [🗺️ Roadmap / Changelog](#️-roadmap--changelog)
-- [🎁 Bonus: COVID-19 patient transcriptomics study (host response)](#-bonus-covid-19-patient-transcriptomics-study-host-response)
+- [🎁 Appendix — Transcriptomics study (host response)](#-appendix--transcriptomics-study-host-response)
 - [📚 Citation](#-citation)
 - [📜 License](#-license)
+
+---
+
+## 🧩 Product surfaces
+
+This repo ships two user-facing services that share the same model artifacts and AWS compute plane (**Nextflow on AWS Batch**) and return job-scoped outputs stored in **S3** with status tracked in **DynamoDB**.
+
+### 🌐 CFR Scoring Portal (Web, gated access, async jobs)
+
+Live product: [https://www.covid-cfr-predictor.com/](https://www.covid-cfr-predictor.com/)  
+**API key required** for submission (`POST /submit`). Contact: [achandrasek6@gmail.com](mailto:achandrasek6@gmail.com)
+
+**What it does**
+- Accepts **one or more FASTA files**
+- Each FASTA may contain **one genome or many genomes** (multi-FASTA supported)
+- Returns **per-genome CFR predictions** plus downloadable artifacts (CSV + logs/aux outputs)
+
+**API (REST)**
+- `POST /submit` *(API key required)* — two-phase submission:
+  - `phase=init`: creates job row + returns presigned S3 upload(s)
+  - `phase=finalize`: verifies uploads + submits Batch (idempotent; safe to retry)
+- `GET /status/<job_id>` — polls job status and returns per-sample result links (presigned URLs)
+- `GET /results/<job_id>/zip` — downloads a ZIP of all output artifacts for the job
+
+**Execution model**
+- Asynchronous flow: **init → upload → finalize → poll status → download ZIP**
+- Compute: **Nextflow on AWS Batch** (ECR images), artifacts in **S3**, status source-of-truth in **DynamoDB**
+
+
+<details>
+<summary><strong>Inputs / outputs (example)</strong></summary>
+
+<img width="1565" height="943" alt="image" src="https://github.com/user-attachments/assets/75899910-9cc0-453f-b1ad-2bae30ffff06" />
+
+
+
+</details>
+
+### 🧮 CFR What-If Calculator (API, restricted access, low-latency)
+
+A FastAPI service for interactive “what-if” analysis on mutation sets. Given a mutation JSON payload, it returns an overall CFR prediction computed as **baseline CFR + Σ(per-mutation delta)**, along with the per-mutation delta breakdown.
+
+**Endpoints**
+- `POST /predict` — returns baseline CFR, per-mutation deltas, and the summed prediction
+- `GET /features` — lists the mutation-derived feature set used by the Lasso model
+- `GET /health` — service health check (used for monitoring / load balancer checks)
+
+**Execution model**
+- Low-latency inference for small inputs; designed for interactive iteration
+- Shares the same versioned model/scaler/feature artifacts as the Batch scoring pipeline (response-level bundle/version metadata not yet surfaced)
+
+**Deployment / access**
+- **ALB (internet-facing) → ECS Fargate (FastAPI)**
+- Currently **restricted to an allowlisted IP**; endpoint is not publicly advertised
+
+<details>
+<summary><strong>Inputs / outputs (example)</strong></summary>
+
+**Example request payloads**
+
+```bash
+cat > /tmp/example.json <<'JSON'
+{
+  "sample_id": "example",
+  "features": {
+    "S_3527": 1,
+    "S_645": 1,
+    "ORF1ab_2428": 1,
+    "S_1451": 1,
+    "S_571": 1,
+    "S_53": 1,
+    "ORF1ab_469": 1,
+    "ORF1ab_11809": 1
+  }
+}
+JSON
+```
+
+**Call `/predict`**
+
+```bash
+curl -sS -X POST $BASE/predict \
+  -H 'Content-Type: application/json' \
+  --data-binary @/tmp/example.json | jq .
+```
+
+**Example response**
+
+```json
+{
+  "sample_id": "example",
+  "cfr_pred": 0.04987867788348602,
+  "cfr_pred_pct": "4.99%",
+  "model": "Lasso",
+  "version": "v1",
+  "top_features": [
+    {
+      "feature": "ORF1ab_11809",
+      "coef": 0.0002988483282241131,
+      "contribution": 0.006047544671233004
+    }
+  ],
+  "feature_file_sha": "3558a4265054"
+}
+
+```
+
+</details>
+
+---
+
 
 ---
 
 ## 🧾 What you get
 
 ### 🧬 Inputs
-- **Genome scoring (Service A):** one or more **FASTA / multi-FASTA** files
-- **What-if scoring (Service B):** mutation **JSON** (feature presence/absence)
+- **CFR Scoring Portal (genome scoring):** one or more **FASTA / multi-FASTA** files
+- **CFR What-If Calculator (what-if scoring):** mutation **JSON** (feature presence/absence)
 
 ### 📤 Outputs
 - **Per-genome CFR predictions** (CSV) + failures/QC artifacts (CSV) + logs/aux outputs (job-scoped)
 - **Downloadable job bundle**: a ZIP of all artifacts for a submission
 - **Attribution for what-if analysis**: per-mutation **delta contributions** alongside the overall CFR prediction
 
-### 🔑 Access model
+### 🔑 Model access
 - **Gated access**: submission is **API-key required** and enforced with **tenant-scoped isolation + quotas/guardrails**.
 
 ---
 
 ## ✨ Key capabilities
 
-This is a gated-access genomics scoring product built and operated like a service: a multi-tenant control plane that safely accepts submissions, a reproducible Batch/Nextflow compute plane, and observable, idempotent job execution with artifact delivery and ML attribution.
+This is a gated-access genomics scoring product built and operated as a service: a multi-tenant control plane that safely accepts submissions, a reproducible Batch/Nextflow compute plane, and observable, idempotent job execution with artifact delivery and ML attribution.
 
 * **Control plane + safety.** API key → tenant mapping (via API Gateway `apiKeyId`), tenant-scoped S3 prefixes, two-phase submit (`init` presign → `finalize` verify+submit), and at-most-once finalize via a conditional lock; quotas are enforced at the gateway and with atomic Dynamo counters (pending uploads / active jobs).  
 * **Durable execution + artifacts.** Nextflow runs on AWS Batch; status is propagated through EventBridge → SQS → handler with DLQ redrive; outputs are job-scoped in S3 with presigned links and an on-demand ZIP bundle.  
@@ -83,7 +197,7 @@ This repository implements a **gated-access genomics scoring product** with two 
 - **CFR What-If Calculator (API)** — low-latency attribution: **mutation JSON → baseline CFR + Σ(per-mutation delta)** with a per-mutation delta breakdown.
   - *Implemented as a FastAPI service on ECS Fargate (restricted access).*
 
-### 🌐 CFR Scoring Portal (Web, gated access, async jobs)
+### 🌐 CFR Scoring Portal 
 A gated-access web UI for asynchronous genome scoring: submit FASTA/multi-FASTA, poll status, and download job-scoped prediction artifacts.
 - **Route 53 domain → CloudFront → React/Vite UI** *(UI infra managed with Terraform)*
 - UI calls a **REST API Gateway**:
@@ -183,7 +297,7 @@ flowchart LR;
 
 </details>
 
-### 🧮 CFR What-If Calculator (API, restricted access, low-latency)
+### 🧮 CFR What-If Calculator 
 
 A FastAPI service for interactive “what-if” analysis. Given a mutation JSON payload, it returns:
 - an **overall CFR prediction** computed as **baseline CFR + Σ(per-mutation delta)**
@@ -254,113 +368,6 @@ flowchart LR;
 
 ---
 
-## 🧩 Product surfaces
-
-This repo ships two user-facing services that share the same model artifacts and AWS compute plane (**Nextflow on AWS Batch**) and return job-scoped outputs stored in **S3** with status tracked in **DynamoDB**.
-
-### 🌐 CFR Scoring Portal
-
-Live product: [https://www.covid-cfr-predictor.com/](https://www.covid-cfr-predictor.com/)  
-**API key required** for submission (`POST /submit`). Contact: [achandrasek6@gmail.com](mailto:achandrasek6@gmail.com)
-
-**What it does**
-- Accepts **one or more FASTA files**
-- Each FASTA may contain **one genome or many genomes** (multi-FASTA supported)
-- Returns **per-genome CFR predictions** plus downloadable artifacts (CSV + logs/aux outputs)
-
-**API (REST)**
-- `POST /submit` *(API key required)* — two-phase submission:
-  - `phase=init`: creates job row + returns presigned S3 upload(s)
-  - `phase=finalize`: verifies uploads + submits Batch (idempotent; safe to retry)
-- `GET /status/<job_id>` — polls job status and returns per-sample result links (presigned URLs)
-- `GET /results/<job_id>/zip` — downloads a ZIP of all output artifacts for the job
-
-**Execution model**
-- Asynchronous flow: **init → upload → finalize → poll status → download ZIP**
-- Compute: **Nextflow on AWS Batch** (ECR images), artifacts in **S3**, status source-of-truth in **DynamoDB**
-
-
-<details>
-<summary><strong>Inputs / outputs (example)</strong></summary>
-
-<img width="1565" height="943" alt="image" src="https://github.com/user-attachments/assets/75899910-9cc0-453f-b1ad-2bae30ffff06" />
-
-
-
-</details>
-
-### 🧮 CFR What-If Calculator
-
-A FastAPI service for interactive “what-if” analysis on mutation sets. Given a mutation JSON payload, it returns an overall CFR prediction computed as **baseline CFR + Σ(per-mutation delta)**, along with the per-mutation delta breakdown.
-
-**Endpoints**
-- `POST /predict` — returns baseline CFR, per-mutation deltas, and the summed prediction
-- `GET /features` — lists the mutation-derived feature set used by the Lasso model
-- `GET /health` — service health check (used for monitoring / load balancer checks)
-
-**Execution model**
-- Low-latency inference for small inputs; designed for interactive iteration
-- Shares the same versioned model/scaler/feature artifacts as the Batch scoring pipeline (response-level bundle/version metadata not yet surfaced)
-
-**Deployment / access**
-- **ALB (internet-facing) → ECS Fargate (FastAPI)**
-- Currently **restricted to an allowlisted IP**; endpoint is not publicly advertised
-
-<details>
-<summary><strong>Inputs / outputs (example)</strong></summary>
-
-**Example request payloads**
-
-```bash
-cat > /tmp/example.json <<'JSON'
-{
-  "sample_id": "example",
-  "features": {
-    "S_3527": 1,
-    "S_645": 1,
-    "ORF1ab_2428": 1,
-    "S_1451": 1,
-    "S_571": 1,
-    "S_53": 1,
-    "ORF1ab_469": 1,
-    "ORF1ab_11809": 1
-  }
-}
-JSON
-```
-
-**Call `/predict`**
-
-```bash
-curl -sS -X POST $BASE/predict \
-  -H 'Content-Type: application/json' \
-  --data-binary @/tmp/example.json | jq .
-```
-
-**Example response**
-
-```json
-{
-  "sample_id": "example",
-  "cfr_pred": 0.04987867788348602,
-  "cfr_pred_pct": "4.99%",
-  "model": "Lasso",
-  "version": "v1",
-  "top_features": [
-    {
-      "feature": "ORF1ab_11809",
-      "coef": 0.0002988483282241131,
-      "contribution": 0.006047544671233004
-    }
-  ],
-  "feature_file_sha": "3558a4265054"
-}
-
-```
-
-</details>
-
----
 
 ## 🚀 Quickstart (CFR Scoring Portal)
 
@@ -392,28 +399,14 @@ curl -sS -X POST $BASE/predict \
 ---
 
 
-## 🔐 Access & Security
+## 🔐 Access & guardrails
 
-**🌐 Demo UI (Service A)**
-- Publicly reachable at https://www.covid-cfr-predictor.com/.
-- Backend enforces an **API key on `POST /submit`** to control usage and costs (request access via **achandrasek6@gmail.com**).
-- Read-only endpoints (`GET /status/{job_id}`, `GET /results/{job_id}/zip`) do not require an API key.
-
-**🧮 Calculator API (Service B)**
-- Deployed behind an internet-facing ALB but currently **restricted to an allowlisted IP** (dev-only).
-- Endpoint is not published; access can be granted on request.
-
-**Hygiene**
-- No secrets or live internal endpoints are committed to the repo.
-
----
-
-## 🚧 Limitations / Guardrails
-
-- **Controlled demo inputs:** custom uploads are disabled in the public UI to prevent unintended use/abuse.
-- **Async execution:** jobs run via Nextflow on AWS Batch; queue/run time can vary. The UI polls `GET /status/{job_id}` until completion.
-- **Job-scoped outputs:** results are isolated per `job_id`. Status returns presigned artifact links when available; `/results/{job_id}/zip` returns a ZIP of the job’s S3 outputs.
-- **Feature space constraints:** predictions and per-mutation deltas are defined over the mutation-derived Lasso feature set (see `GET /features`).
+- **Gated access:** submissions require an **API key** (request via **achandrasek6@gmail.com**).
+- **Tenant isolation:** jobs/artifacts are **tenant-scoped** (tenant_id stamped; tenant-scoped S3 prefixes).
+- **Local uploads:** curated datasets or **up to 5 FASTA files per submission** (single- or multi-FASTA).
+- **Async execution:** scoring runs on AWS Batch/Nextflow; queue/run time can vary and the UI tracks status to completion.
+- **Job-scoped outputs:** per-sample CSVs plus a full **ZIP bundle** per job.
+- **Calculator access:** CFR What-If Calculator is **restricted access** (allowlisted IP), not publicly advertised.
 
 ---
 
