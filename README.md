@@ -467,7 +467,7 @@ project/
 ├─ .gitignore                        # Git ignore rules
 ├─ Dockerfile.api                    # API Container build context
 ├─ CITATION.cff                      # Citation metadata for the project
-├─ LICENSE.md                        # Apache License 2.0
+├─ LICENSE                           # Apache License 2.0
 ├─ README.md                         # This documentation
 ├─ environment.yml                   # Conda environment spec
 ├─ requirements.txt                  # pip requirements
