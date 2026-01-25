@@ -28,8 +28,8 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 ## 📖 Table of Contents
 
 - [🧩 Product surfaces](#-product-surfaces)
-  - [🌐 CFR Scoring Portal](#-cfr-scoring-portal)
-  - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator)
+  - [🌐 CFR Scoring Portal](#-cfr-scoring-portal-web-gated-access-async-jobs)
+  - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator-api-restricted-access-low-latency)
 - [🧾 What you get](#-what-you-get)
 - [✨ Key capabilities](#-key-capabilities)
 - [🧭 Architecture Overview](#-architecture-overview)
