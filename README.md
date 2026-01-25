@@ -158,8 +158,6 @@ curl -sS -X POST $BASE/predict \
 ---
 
 
----
-
 ## 🧾 What you get
 
 ### 🧬 Inputs
