@@ -205,25 +205,26 @@ A gated-access web UI for asynchronous genome scoring: submit FASTA/multi-FASTA,
   - `GET /status/{job_id}` — reads **DynamoDB** (source of truth) and returns status plus result links (presigned URLs for `predictions.csv` / `failures.csv`)
   - `GET /results/{job_id}/zip` — streams all S3 artifacts under the job prefix into an in-memory ZIP and returns it for browser download
 - **Durable status updates (with retries + DLQ):**
-  - **AWS Batch job state changes → EventBridge → SQS (`cfr-batch-events-queue`) → `cfr-event-handler` Lambda**
+  - **AWS Batch job state changes → EventBridge → SQS (`cfr-batch-events-queue`) → `cfr-event-handler` Lambda (λ)**
   - SQS redrives to **DLQ (`cfr-batch-events-dlq`)** after max receives; DLQ non-empty is alarmed
   - Handler updates the DynamoDB job row for the matching `batch_job_id` and applies terminal updates exactly once
 - Nextflow executes containerized stages on **AWS Batch** using images in **ECR** and writes artifacts to **S3** under tenant/job-scoped prefixes.
 
 ```mermaid
 flowchart LR
-  U[User] <--> UI[Web UI / CloudFront]
-  UI <--> APIGW[API Gateway]
-  APIGW <--> CP[Control plane / Lambdas + Dynamo]
+  U[User] <--> UI[Web UI / CF]
+  UI <--> APIGW[API GW]
+  APIGW <--> CP[Control plane: λ + DDB]
 
-  CP --> BATCH[AWS Batch / Nextflow]
-  BATCH --> CP
-
+  CP <--> BATCH[Batch + Nextflow]
   BATCH --> S3[(S3 artifacts)]
+
+  BATCH --> EP[EB -> SQS -> handler]
+  EP --> CP
   S3 --> CP
 
-  BATCH --> EP[EventBridge -> SQS -> handler]
-  EP --> CP
+
+
 
 
 
@@ -238,9 +239,9 @@ flowchart LR;
   U[User] --> UI[React/Vite UI];
   UI --> APIGW[API Gateway REST];
 
-  APIGW --> LSUB[Lambda submit-cfr-job];
-  APIGW --> LSTAT[Lambda covid_cfr_get_status];
-  APIGW --> LZIP[Lambda covid_cfr_download_zip];
+  APIGW --> LSUB[λ submit-cfr-job];
+  APIGW --> LSTAT[λ covid_cfr_get_status];
+  APIGW --> LZIP[λ covid_cfr_download_zip];
 
   %% init: create job + presign
   UI -->|POST /submit phase=init + api key| APIGW;
@@ -271,7 +272,7 @@ flowchart LR;
   %% durable status propagation (EventBridge -> SQS -> handler)
   BATCH --> EB[EventBridge];
   EB --> SQS[SQS cfr-batch-events-queue];
-  SQS --> LEVT[Lambda cfr_event_handler];
+  SQS --> LEVT[λ cfr_event_handler];
   SQS -. redrive .-> DLQ[SQS cfr-batch-events-dlq];
   LEVT --> DDB;
 
