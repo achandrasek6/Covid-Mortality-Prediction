@@ -10,7 +10,7 @@
 
 🔗 **Live product (gated access):** https://www.covid-cfr-predictor.com/ *(API key required — contact achandrasek6@gmail.com for access)*
 
-A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway**/**Lambda**/**DynamoDB**/**S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **case-fatality rate (CFR) predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
+A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway** / **Lambda** / **DynamoDB** / **S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **case-fatality rate (CFR) predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
 
 **Product surfaces**
 - **CFR Scoring Portal (Web, gated access, async scoring):** FASTA/multi-FASTA → per-genome **CFR predictions** + downloadable artifacts (`predictions.csv`, `failures.csv`)
