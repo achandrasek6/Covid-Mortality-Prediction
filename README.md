@@ -480,7 +480,7 @@ project/
 
 ## 🧪 Model development & validation
 
-This project predicts variant-specific COVID-19 case-fatality rates (CFR) from viral genome sequences. The current shipped model is an interpretable Lasso regression baseline (**scikit-learn**) trained on mutation-derived features. Jobs run in a reproducible compute plane orchestrated with **Nextflow DSL2**, containerized with **Docker**, and executed on **AWS Batch**. A fine-tuned **DNABERT** transformer (6-mer tokenization) is trained as a higher-capacity alternative; optional GPU integration via Nextflow is planned.
+The shipped baseline is an interpretable **Lasso regression (scikit-learn)** model trained on mutation-derived features to produce per-genome **CFR predictions** and support mutation-level attribution. Jobs run in a reproducible compute plane orchestrated with **Nextflow DSL2**, containerized with **Docker**, and executed on **AWS Batch**. A fine-tuned **DNABERT** transformer (6-mer tokenization) is trained as a higher-capacity alternative; optional GPU integration via Nextflow is planned.
 
 **Accuracy (held-out test, Lasso).** **R² = 0.831**, **RMSE ≈ 0.00194**, **MAE ≈ 0.00050**, **Spearman = 0.804**.
 
