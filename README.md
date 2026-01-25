@@ -33,16 +33,16 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
   - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator-api-restricted-access-low-latency)
 - [🧾 What you get](#-what-you-get)
 - [✨ Key capabilities](#-key-capabilities)
-- [🧭 Architecture Overview](#-architecture-overview)
+- [🧭 Architecture overview](#-architecture-overview)
 - [🛡️ Reliability, guardrails, and ops](#️-reliability-guardrails-and-ops)
 - [🚀 Quickstart (CFR Scoring Portal)](#-quickstart-cfr-scoring-portal)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
 - [🔐 Access & security](#-access--security)
 - [📦 Results & artifacts](#-results--artifacts)
-- [🗂️ Repository Layout](#️-repository-layout)
-- [🧪 Model Development & Validation](#-model-development--validation)
-  - [📈 Key Figures](#-key-figures)
-- [🗺️ Roadmap / Changelog](#️-roadmap--changelog)
+- [🗂️ Repository layout](#️-repository-layout)
+- [🧪 Model development & validation](#-model-development--validation)
+  - [📈 Key figures](#-key-figures)
+- [🗺️ Roadmap / changelog](#️-roadmap--changelog)
 - [🎁 Appendix — Transcriptomics study (host response)](#-appendix--transcriptomics-study-host-response)
 - [📚 Citation](#-citation)
 - [📜 License](#-license)
@@ -187,7 +187,7 @@ This is a gated-access genomics scoring product built and operated as a service:
 
 ---
 
-## 🧭 Architecture Overview
+## 🧭 Architecture overview
 
 This repository implements a **gated-access genomics scoring product** with two product surfaces that share a common compute plane (**Nextflow on AWS Batch**) and shared state (**DynamoDB + S3**):
 
@@ -441,7 +441,7 @@ Each submission produces a **job-scoped artifact bundle** written to S3 under a 
 ---
 
 
-## 🗂️ Repository Layout
+## 🗂️ Repository layout
 
 ```
 project/
@@ -478,7 +478,7 @@ project/
 ---
 
 
-## 🧪 Model Development & Validation
+## 🧪 Model development & validation
 
 This project predicts **variant-specific COVID-19 case-fatality rates (CFR)** from viral genome sequences. The current shipped model is an interpretable **Lasso regression** baseline trained on mutation-derived features. Jobs run in a reproducible compute plane orchestrated with **Nextflow DSL2**, containerized with **Docker**, and executed on **AWS Batch**. A fine-tuned **DNABERT** transformer (6-mer tokenization) is trained as a higher-capacity alternative; optional GPU integration via Nextflow is planned.
 
@@ -512,7 +512,7 @@ The higher mutation density in Spike likely reflects (i) *positive selection* fo
 
 
 
-### 📈 Key Figures
+### 📈 Key figures
 
 
 
@@ -521,13 +521,13 @@ The higher mutation density in Spike likely reflects (i) *positive selection* fo
 
 
 
-#### 1) Overall Performance (stability across resamples)
+#### 1) Overall performance (stability across resamples)
 
 The model’s R² value falls within the 95% bootstrapped confidence interval, indicating that its performance is representative of the underlying distribution rather than a single favorable data split.
 
 ![Bootstrap Test R² Distribution](figures/bootstrap_r2_histogram.png)
 
-#### 2) Robustness Checks (controls)
+#### 2) Robustness checks (controls)
 
 Both controls show the model isn’t learning artifacts.
 
@@ -536,7 +536,7 @@ Both controls show the model isn’t learning artifacts.
 | <img src="https://github.com/user-attachments/assets/b8fe9a63-c2c9-46c4-aacc-2ff920dbe9b5" alt="Label permutation R² distribution (Lasso baseline)" width="100%"/> | <img src="https://github.com/user-attachments/assets/b91799ee-f531-47d6-98ee-f9bf544c06c9" alt="Feature shuffle R² distribution (Lasso baseline)" width="100%"/> |
 | <sub>Shuffle **labels**: breaks the signal; R² histogram is centered **well below 0**, confirming the model isn’t fitting noise.</sub> | <sub>Shuffle **features** in training only: destroys feature structure; test R² **collapses**, showing real dependence on true features.</sub> |
 
-#### 3) What Genes Matter (group ablations)
+#### 3) What genes Matter (group ablations)
 
 Removing the **top-50 |coef|** features yields the largest drop (**ΔR² ≈ −0.033**), validating the coefficient ranking. Dropping **Spike (`^S_`)** features (**ΔR² ≈ −0.025**) and **ORF1ab** (**ΔR² ≈ −0.019**) also harms performance—evidence these genes carry real signal.
 
@@ -622,7 +622,7 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 ---
 
 
-## 🗺️ Roadmap / Changelog
+## 🗺️ Roadmap / changelog
 
 ### ✅ v2.1 — Jan 2026 (operated, gated-access product hardening)
 - Promoted the Web UI to a **gated-access product** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda.
