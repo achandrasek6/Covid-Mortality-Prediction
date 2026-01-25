@@ -446,16 +446,18 @@ Each submission produces a **job-scoped artifact bundle** written to S3 under a 
 ```
 project/
 ├─ .github/                          # GitHub config (Actions workflows, etc.)
-├─ app/                              # FastAPI service (main.py, requirements.txt)
+├─ app/                              # FastAPI service (Python)
 ├─ controls_out/                     # Robustness outputs (label perms, shuffles, ablations)
-├─ covid-cfr-ui/                     # Frontend UI application
-├─ covid-cfr-ui-infra/               # Terraform infrastructure for UI
+├─ covid-cfr-ui/                     # React/Vite TypeScript web portal (gated scoring UI) 
+├─ covid-cfr-ui-infra/               # Terraform IaC for web UI edge (Route 53/CloudFront)
 ├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
-├─ docker/                           # NF container build context (Dockerfile.lasso lives here)
+├─ docker/                           # Nextflow task container build context 
+├─ dockerfile.api                    # ECS API container build context
 ├─ explanations/                     # SHAP/LIME figures, explanation reports
 ├─ figures/                          # Visualizations & diagrams used in the README/papers
 ├─ lasso_training_data/              # Train/test feature matrices for Lasso
 ├─ model_artifacts/                  # Trained models, scalers, checkpoints
+├─ nf-runner/                        # Nextflow runner files 
 ├─ ops/                              # Load tests, runbook, ADRs
 ├─ raw_data/                         # Reference genomes & annotations
 ├─ scripts/                          # Python utilities & CLI entrypoints
@@ -465,15 +467,13 @@ project/
 ├─ .gitignore                        # Git ignore rules
 ├─ Dockerfile.api                    # API Container build context
 ├─ CITATION.cff                      # Citation metadata for the project
+├─ LICENSE.md                        # Apache License 2.0
 ├─ README.md                         # This documentation
 ├─ environment.yml                   # Conda environment spec
 ├─ requirements.txt                  # pip requirements
 ├─ main.nf                           # Nextflow pipeline entrypoint
 └─ nextflow.config                   # Nextflow profiles & executor configs
 ```
-**Notes**
-- UI infrastructure is managed with Terraform in `covid-cfr-ui-infra/` (Route 53, CloudFront, and related resources).
-- Some scripts assume relative paths (e.g., `../raw_data`). Run from `scripts/` or adjust paths.
 
 ---
 
