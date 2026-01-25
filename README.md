@@ -2,10 +2,11 @@
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Nextflow](https://img.shields.io/badge/Nextflow-DSL2-orange)
-![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20Fargate-lightgrey)
+![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20ECS%20%7C%20API%20Gateway%20%7C%20CloudFront-lightgrey)
 [![Deploy UI](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml)
 [![Deploy API](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
 [![Build NF Runner](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml)
+![Terraform](https://img.shields.io/badge/Terraform-IaC-7B42BC)
 
 🔗 **Live product (gated access):** https://www.covid-cfr-predictor.com/ *(API key required — contact achandrasek6@gmail.com for access)*
 
@@ -16,7 +17,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 - **CFR What-If Calculator (API, restricted access, low-latency):** mutation JSON → **CFR prediction** computed as **baseline + Σ deltas** + **per-mutation delta attribution**
 
 **Availability**
-- **Web UI (gated access):** Route 53/CloudFront → API Gateway (REST) → Lambda (**API key required for submission**)
+- **Web UI (gated access)**: Route 53/CloudFront (**Terraform IaC**) → API Gateway (REST) → Lambda (**API key required for submission**)
 - **Calculator API:** FastAPI on ECS Fargate behind an internet-facing ALB, restricted to an allowlisted IP (dev-only)
 
 **Status: v2.1 (Jan 2026) — Gated-access product shipped; multi-tenant control plane (API-key→tenant), two-phase submit (init→finalize) with idempotent finalize, durable status propagation (EventBridge→SQS→handler + DLQ) with alarms/runbook; validated control-plane p95 ≈ 223ms @ 10 req/s. DNABERT GPU + NL calculator interface planned.**
