@@ -172,6 +172,7 @@ curl -sS -X POST $BASE/predict \
 
 ### 🔑 Model access
 - **Gated access**: submission is **API-key required** and enforced with **tenant-scoped isolation + quotas/guardrails**.
+  - _Contact achandrasek6@gmail.com for access._
 
 ---
 
