@@ -37,7 +37,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 - [🛡️ Reliability, guardrails, and ops](#️-reliability-guardrails-and-ops)
 - [🚀 Quickstart (CFR Scoring Portal)](#-quickstart-cfr-scoring-portal)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
-- [🔐 Access & guardrails](#-access--guardrails)
+- [🔐 Access & security](#-access--security)
 - [📦 Results & artifacts](#-results--artifacts)
 - [🗂️ Repository Layout](#️-repository-layout)
 - [🧪 Model Development & Validation](#-model-development--validation)
@@ -398,7 +398,7 @@ flowchart LR;
 ---
 
 
-## 🔐 Access & guardrails
+## 🔐 Access & security
 
 - **Gated access:** submissions require an **API key** (request via **achandrasek6@gmail.com**).
 - **Tenant isolation:** jobs/artifacts are **tenant-scoped** (tenant_id stamped; tenant-scoped S3 prefixes).
