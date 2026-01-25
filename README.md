@@ -452,7 +452,6 @@ project/
 ├─ covid-cfr-ui-infra/               # Terraform IaC for web UI edge (Route 53/CloudFront)
 ├─ dnabert_cfr_regressor...          # DNABERT weights + tokenizer artifacts
 ├─ docker/                           # Nextflow task container build context 
-├─ dockerfile.api                    # ECS API container build context
 ├─ explanations/                     # SHAP/LIME figures, explanation reports
 ├─ figures/                          # Visualizations & diagrams used in the README/papers
 ├─ lasso_training_data/              # Train/test feature matrices for Lasso
