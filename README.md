@@ -64,14 +64,11 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 
 ## ✨ Key capabilities
 
-- **Gated, multi-tenant control plane:** API key → **tenant mapping** (via API Gateway `apiKeyId`), **tenant_id stamped** on job metadata, and **tenant-scoped S3 prefixes** for uploads/outputs (blast-radius containment).
-- **Two-phase submission for correctness:** `init` **presigns uploads** + creates the job row, then `finalize` **verifies uploads** and submits compute (clean separation of concerns).
-- **Idempotent finalize (at-most-once compute):** conditional lock on the job row prevents double-submit; retries return **“already submitted”** with the same `batch_job_id`.
-- **Abuse prevention with explicit quotas:** layered throttling (API Gateway usage plan) plus application-layer concurrency caps (**pending uploads** and **active jobs**) enforced with **atomic Dynamo counters**.
-- **Durable, observable status propagation:** Batch events flow through **EventBridge → SQS → handler Lambda** with **DLQ** redrive; job status is updated in DynamoDB and reflected in the UI.
-- **Artifacts as first-class outputs:** job-scoped outputs in S3 with **presigned links** and an on-demand **ZIP bundle** download.
-- **Interpretable ML + “what-if” attribution:** shipped **Lasso** baseline for CFR prediction and a calculator API that returns **per-mutation delta contributions** for mutation JSON inputs.
-- **Operated like a service:** structured JSON logs (with redaction), saved Logs Insights queries, load-test harnesses (k6/vegeta), alarms + runbook + ADRs under `ops/`.
+This is a gated-access genomics scoring product built and operated like a service: a multi-tenant control plane that safely accepts submissions, a reproducible Batch/Nextflow compute plane, and observable, idempotent job execution with artifact delivery and ML attribution.
+
+* **Control plane + safety.** API key → tenant mapping (via API Gateway `apiKeyId`), tenant-scoped S3 prefixes, two-phase submit (`init` presign → `finalize` verify+submit), and at-most-once finalize via a conditional lock; quotas are enforced at the gateway and with atomic Dynamo counters (pending uploads / active jobs).  
+* **Durable execution + artifacts.** Nextflow runs on AWS Batch; status is propagated through EventBridge → SQS → handler with DLQ redrive; outputs are job-scoped in S3 with presigned links and an on-demand ZIP bundle.  
+* **ML + operations.** Interpretable Lasso predictions with mutation-level attribution (what-if deltas), plus structured logs (redacted), saved Logs Insights queries, load tests (k6/vegeta), alarms, runbook, and ADRs in `ops/`.
 
 > Ops docs: `ops/README.md`, `ops/runbook/RUNBOOK.md`, `ops/loadtest/README.md`, and `ops/adr/`.
 
