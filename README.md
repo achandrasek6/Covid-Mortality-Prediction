@@ -20,7 +20,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 - **Web UI (gated access)**: Route 53/CloudFront (**Terraform IaC**) → API Gateway (REST) → Lambda (**API key required for submission**)
 - **Calculator API:** FastAPI on ECS Fargate behind an internet-facing ALB, restricted to an allowlisted IP (dev-only)
 
-**Status: v2.1 (Jan 2026) — Gated-access product shipped; multi-tenant control plane (API-key→tenant), two-phase submit (init→finalize) with idempotent finalize, durable status propagation (EventBridge→SQS→handler + DLQ) with alarms/runbook; validated control-plane p95 ≈ 223ms @ 10 req/s. DNABERT GPU + NL calculator interface planned.**
+**Status:** v2.1 (Jan 2026) — Gated-access product shipped; multi-tenant control plane; idempotent two-phase submit; durable status propagation (EventBridge→SQS→handler + DLQ); alarms/runbook. Validated **p95 ≈ 223ms @ 10 req/s**. DNABERT GPU + NL calculator interface planned.
 
 **Appendix:** includes a COVID-19 patient transcriptomics analysis (DGE + pathway insights) at the end of this README.
 
