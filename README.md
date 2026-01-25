@@ -625,7 +625,7 @@ An elbow curve shows lasso model performance saturating with a relatively small 
 
 ## 🗺️ Roadmap / changelog
 
-### ✅ v2.1 — Jan 2026 (operated, gated-access product hardening)
+### ✅ v2.1.0 — Jan 2026 (operated, gated-access product hardening)
 - Promoted the Web UI to a **gated-access product** on a custom domain (Route 53 + CloudFront) backed by API Gateway + Lambda.
 - Shipped a **multi-tenant control plane**:
   - API key → tenant mapping via API Gateway `apiKeyId` + DynamoDB `covid_cfr_api_keys`
