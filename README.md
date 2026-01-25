@@ -12,8 +12,8 @@
 A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway**/**Lambda**/**DynamoDB**/**S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **CFR predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
 
 **Product surfaces**
-- **Service A — Web UI (gated access, async scoring):** FASTA/multi-FASTA → per-genome **CFR predictions** + downloadable artifacts (predictions.csv, failures.csv)
-- **Service B — FastAPI calculator (private, low-latency):** mutation JSON → **CFR prediction** + **per-mutation delta attribution** (feature contributions)
+- **CFR Scoring Portal (Web, gated access, async scoring):** FASTA/multi-FASTA → per-genome **CFR predictions** + downloadable artifacts (`predictions.csv`, `failures.csv`)
+- **CFR What-If Calculator (API, restricted access, low-latency):** mutation JSON → **CFR prediction** computed as **baseline + Σ deltas** + **per-mutation delta attribution**
 
 **Availability**
 - **Web UI (gated access):** Route 53/CloudFront → API Gateway (REST) → Lambda (**API key required for submission**)
