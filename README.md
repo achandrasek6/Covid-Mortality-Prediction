@@ -76,7 +76,7 @@ Live product: [https://www.covid-cfr-predictor.com/](https://www.covid-cfr-predi
 
 
 <details>
-<summary><strong>Inputs / outputs (example)</strong></summary>
+<summary><strong>Usage (example)</strong></summary>
 
 <img width="1565" height="943" alt="image" src="https://github.com/user-attachments/assets/75899910-9cc0-453f-b1ad-2bae30ffff06" />
 
@@ -102,7 +102,7 @@ A FastAPI service for interactive “what-if” analysis on mutation sets. Given
 - Currently **restricted to an allowlisted IP**; endpoint is not publicly advertised
 
 <details>
-<summary><strong>Inputs / outputs (example)</strong></summary>
+<summary><strong>Usage (example)</strong></summary>
 
 **Example request payloads**
 
