@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Nextflow](https://img.shields.io/badge/Nextflow-DSL2-orange)
-![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20ECS%20%7C%20API%20Gateway%20%7C%20CloudFront-lightgrey)
+![AWS](https://img.shields.io/badge/AWS-Batch%20%7C%20ECS%20%7C%20API%20Gateway-lightgrey)
 [![Deploy UI](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/deploy-ui.yml)
 [![Deploy API](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-fastapi.yml)
 [![Build NF Runner](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml/badge.svg)](https://github.com/achandrasek6/Covid-Mortality-Prediction/actions/workflows/ecr-push-runner.yml)
