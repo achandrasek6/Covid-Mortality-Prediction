@@ -33,8 +33,6 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 - [🧾 What you get](#-what-you-get)
 - [✨ Key capabilities](#-key-capabilities)
 - [🧭 Architecture Overview](#-architecture-overview)
-  - [🌐 CFR Scoring Portal](#-cfr-scoring-portal)
-  - [🧮 CFR What-If Calculator](#-cfr-what-if-calculator)
 - [🛡️ Reliability, guardrails, and ops](#️-reliability-guardrails-and-ops)
 - [🚀 Quickstart (CFR Scoring Portal)](#-quickstart-cfr-scoring-portal)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
