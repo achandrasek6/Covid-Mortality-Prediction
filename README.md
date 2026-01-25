@@ -177,7 +177,8 @@ curl -sS -X POST $BASE/predict \
 
 ## ✨ Key capabilities
 
-This is a gated-access genomics scoring product built and operated as a service: a multi-tenant control plane that safely accepts submissions, a reproducible Batch/Nextflow compute plane, and observable, idempotent job execution with artifact delivery and ML attribution.
+This is a **gated-access** genomics scoring product built and operated as a service: a **multi-tenant control plane**, a reproducible **Batch/Nextflow compute plane**, and **observable, idempotent** job execution with artifact delivery and **ML attribution**.
+
 
 * **Control plane + safety.** API key → tenant mapping (via API Gateway `apiKeyId`), tenant-scoped S3 prefixes, two-phase submit (`init` presign → `finalize` verify+submit), and at-most-once finalize via a conditional lock; quotas are enforced at the gateway and with atomic Dynamo counters (pending uploads / active jobs).  
 * **Durable execution + artifacts.** Nextflow runs on AWS Batch; status is propagated through EventBridge → SQS → handler with DLQ redrive; outputs are job-scoped in S3 with presigned links and an on-demand ZIP bundle.  
