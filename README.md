@@ -37,7 +37,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 - [🚀 Quickstart (CFR Scoring Portal)](#-quickstart-cfr-scoring-portal)
 - [🧰 Troubleshooting (quick)](#-troubleshooting-quick)
 - [🔐 Access & guardrails](#-access--guardrails)
-- [📦 Outputs](#-outputs)
+- [📦 Results & artifacts](#-results--artifacts)
 - [🗂️ Repository Layout](#️-repository-layout)
 - [🧪 Model Development & Validation](#-model-development--validation)
   - [📈 Key Figures](#-key-figures)
@@ -409,7 +409,7 @@ flowchart LR;
 
 ---
 
-## 📦 Outputs
+## 📦 Results & artifacts
 
 ### 🌐 CFR Scoring Portal
 
