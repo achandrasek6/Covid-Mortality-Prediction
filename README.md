@@ -183,7 +183,7 @@ This is a gated-access genomics scoring product built and operated as a service:
 * **Durable execution + artifacts.** Nextflow runs on AWS Batch; status is propagated through EventBridge → SQS → handler with DLQ redrive; outputs are job-scoped in S3 with presigned links and an on-demand ZIP bundle.  
 * **ML + operations.** Interpretable Lasso predictions with mutation-level attribution (what-if deltas), plus structured logs (redacted), saved Logs Insights queries, load tests (k6/vegeta), alarms, runbook, and ADRs in `ops/`.
 
-> Ops docs: `ops/README.md`, `ops/runbook/RUNBOOK.md`, `ops/loadtest/README.md`, and `ops/adr/`.
+> Ops docs: [`ops/README.md`](ops/README.md), [`RUNBOOK.md`](ops/runbook/RUNBOOK.md), [`load testing`](ops/loadtest/README.md), and [`ADRs`](ops/adr/).
 
 ---
 
@@ -361,9 +361,10 @@ flowchart LR;
 - SNS notification path configured and tested.
 
 **Ops artifacts (this repo)**
-- Runbook: `ops/runbook/RUNBOOK.md`
-- Load tests: `ops/loadtest/` (k6/vegeta + E2E smoke)
-- ADRs: `ops/adr/` (tenancy, eventing, guardrails, finalize idempotency)
+- Runbook: [`ops/runbook/RUNBOOK.md`](ops/runbook/RUNBOOK.md)
+- Load tests: [`ops/loadtest/README.md`](ops/loadtest/README.md) (k6/vegeta + E2E smoke)
+- ADRs: [`ops/adr/`](ops/adr/) (tenancy, eventing, guardrails, finalize idempotency)
+
 
 ---
 
