@@ -28,6 +28,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 ## 📖 Table of Contents
 
 - [🧭 Architecture Overview](#-architecture-overview)
+- [✨ Key capabilities](#-key-capabilities)
 - [🧩 Services](#-services)
   - [🌐 Service A — Public Demo UI (async genome scoring)](#-service-a--public-demo-ui-async-genome-scoring)
   - [🧮 Service B — FastAPI Calculator (private, low-latency)](#-service-b--fastapi-calculator-private-low-latency)
