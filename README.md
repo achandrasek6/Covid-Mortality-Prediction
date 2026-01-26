@@ -10,7 +10,7 @@
 
 🔗 **Live product (gated access):** https://www.covid-cfr-predictor.com/ *(API key required — contact achandrasek6@gmail.com for access)*
 
-A gated-access, multi-tenant genomics scoring service: a hardened **control plane** (**API Gateway** / **Lambda** / **DynamoDB** / **S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, producing per-genome **case-fatality rate (CFR) predictions** from an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
+A **multi-tenant** genomics scoring service: a hardened **control plane** (**API Gateway** / **Lambda** / **DynamoDB** / **S3 presigns**) that reliably submits and tracks reproducible **Nextflow** pipelines on **AWS Batch**, converting **SARS-CoV-2 genomes** into **COVID-19 CFR risk scores** *(CFR = deaths / confirmed cases)* with an interpretable **Lasso** model (with **mutation-level attribution**) and returning **job-scoped artifacts** with guardrails (**idempotency**, **quotas**, **DLQ**, **alarms**, **runbooks**).
 
 **Product surfaces**
 - **CFR Scoring Portal (Web, gated access, async scoring):** FASTA/multi-FASTA → per-genome **CFR predictions** + downloadable artifacts (`predictions.csv`, `failures.csv`)
@@ -18,7 +18,7 @@ A gated-access, multi-tenant genomics scoring service: a hardened **control plan
 
 **Availability**
 - **Web UI (gated access)**: Route 53/CloudFront (**Terraform IaC**) → API Gateway (REST) → Lambda (**API key required for submission**)
-- **Calculator API:** FastAPI on ECS Fargate behind an internet-facing ALB, restricted to an allowlisted IP (dev-only)
+- **Calculator API:** FastAPI on ECS Fargate behind an internet-facing ALB, restricted to an allowlisted IP (private preview)
 
 **Status:** v2.1 (Jan 2026) — Gated-access product shipped; multi-tenant control plane; idempotent two-phase submit; durable status propagation (EventBridge→SQS→handler + DLQ); alarms/runbook. Validated **p95 ≈ 223ms @ 10 req/s**. DNABERT GPU + NL calculator interface planned.
 
