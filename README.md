@@ -383,8 +383,8 @@ flowchart LR;
 4) Watch the status updates until the job completes.
 
 5) Download outputs from the UI:
-   - Download the full job artifact bundle (ZIP), and/or
-   - Download per-sample results when available (predictions and failures reports).
+   - Download the job artifact bundle (ZIP), and/or
+   - Download other bundles when available _(tick row checkboxes to multi-download)_.
 
 ---
 
