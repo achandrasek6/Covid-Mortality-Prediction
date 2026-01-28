@@ -393,7 +393,7 @@ flowchart LR;
 - **Can’t submit / forbidden:** ensure your **API key** is set in the UI (submission is gated access).
 - **Upload rejected:** verify files are **FASTA-formatted**; local uploads are limited to **up to 5 files per submission**.
 - **Job appears stuck:** queue time on **AWS Batch** can vary. Keep the job open and check back; status updates propagate asynchronously.
-- **`failures.csv` present:** some genomes failed preprocessing/QC; review `failures.csv` for reasons and sample IDs.
+- **`failures.csv` populated:** some genomes failed preprocessing/QC; review `failures.csv` for reasons and sample IDs.
 - **Downloads fail or take a while:** ZIP bundling is generated on demand; retry after a moment for large jobs.
 - **Need deeper debugging/ops:** see [`runbook.md`](ops/runbook/runbook.md) (DLQ, handler errors, stuck states, safe toggles).
 
