@@ -362,7 +362,7 @@ flowchart LR;
 - SNS notification path configured and tested.
 
 **Ops artifacts (this repo)**
-- Runbook: [`ops/runbook/RUNBOOK.md`](ops/runbook/RUNBOOK.md)
+- Runbook: [`ops/runbook/runbook.md`](ops/runbook/runbook.md)
 - Load tests: [`ops/loadtest/README.md`](ops/loadtest/README.md) (k6/vegeta + E2E smoke)
 - ADRs: [`ops/adr/`](ops/adr/) (tenancy, eventing, guardrails, finalize idempotency)
 
