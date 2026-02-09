@@ -372,7 +372,7 @@ flowchart LR;
 
 ## 🚀 Quickstart (CFR Scoring Portal)
 
-1) Open https://www.covid-cfr-predictor.com/ and enter your API key when prompted.
+1) Open https://www.covid-cfr-predictor.com/ and enter your API key where prompted.
 
 2) Choose an input source:
    - **Curated dataset**: keep the dataset dropdown enabled and select a preconfigured dataset, or
